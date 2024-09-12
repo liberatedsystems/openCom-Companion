@@ -62,6 +62,16 @@ MDNavigationLayout:
                                 
 
                         OneLineIconListItem:
+                            text: "Objects & Devices"
+                            on_release: root.ids.screen_manager.app.objects_action(self)
+                            # _no_ripple_effect: True
+                        
+                            IconLeftWidget:
+                                icon: "devices"
+                                on_release: root.ids.screen_manager.app.objects_action(self)
+                                
+
+                        OneLineIconListItem:
                             text: "Situation Map"
                             on_release: root.ids.screen_manager.app.map_action(self)
                         
@@ -1350,6 +1360,19 @@ MDScreen:
                         font_size: dp(24)
                         height: dp(64)
 
+                MDLabel:
+                    text: "Appearance"
+                    font_style: "H6"
+                    size_hint_y: None
+                    height: self.texture_size[1]
+
+                MDLabel:
+                    id: settings_info3
+                    markup: True
+                    text: "\\nThis section lets you configure the appearance of the application to suit your preferences, such as themes and what levels of information to display. When user icons are enabled, the contact list will display icons other users have configured in their [b]Telemetry[/b] settings.\\n"
+                    size_hint_y: None
+                    height: self.texture_size[1]
+
                 MDBoxLayout:
                     orientation: "horizontal"
                     size_hint_y: None
@@ -1402,11 +1425,26 @@ MDScreen:
                     height: dp(48)
                     
                     MDLabel:
-                        text: "Display styles in conversation list"
+                        text: "Show user icons in conversation list"
                         font_style: "H6"
 
                     MDSwitch:
                         id: display_style_in_contact_list
+                        pos_hint: {"center_y": 0.3}
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
+                        text: "Only show user icons from trusted"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: display_style_from_trusted_only
                         pos_hint: {"center_y": 0.3}
                         active: False
 
@@ -1424,6 +1462,19 @@ MDScreen:
                         id: settings_advanced_statistics
                         pos_hint: {"center_y": 0.3}
                         active: False
+
+                MDLabel:
+                    text: "\\nBehaviour"
+                    font_style: "H6"
+                    size_hint_y: None
+                    height: self.texture_size[1]
+
+                MDLabel:
+                    id: settings_info3
+                    markup: True
+                    text: "\\nThis section configures various automated actions and default behaviours. Sync intervals can be configured, and you can control what kind of peers can send you messages.\\n"
+                    size_hint_y: None
+                    height: self.texture_size[1]
 
                 MDBoxLayout:
                     orientation: "horizontal"
@@ -1551,6 +1602,54 @@ MDScreen:
                         id: settings_lxmf_sync_interval
                         sensitivity: "all"
                         hint: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
+                        id: settings_lxmf_require_stamps_label
+                        text: "Require stamps for incoming"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: settings_lxmf_require_stamps
+                        pos_hint: {"center_y": 0.3}
+                        disabled: False
+                        active: False
+
+                MDBoxLayout:
+                    id: lxmf_costslider_container
+                    orientation: "vertical"
+                    size_hint_y: None
+                    padding: [0,0,dp(0),0]
+                    height: dp(68)
+
+                    MDSlider
+                        min: 1
+                        max: 32
+                        value: 8
+                        id: settings_lxmf_require_stamps_cost
+                        sensitivity: "all"
+                        hint: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
+                        text: "Ignore messages with invalid stamps"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: settings_ignore_invalid_stamps
+                        pos_hint: {"center_y": 0.3}
+                        disabled: False
+                        active: False
 
                 MDBoxLayout:
                     orientation: "horizontal"

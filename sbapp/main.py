@@ -1,6 +1,6 @@
 __debug_build__ = False
 __disable_shaders__ = False
-__version__ = "0.8.5"
+__version__ = "0.9.5"
 __variant__ = "beta"
 
 import sys
@@ -9,6 +9,8 @@ parser = argparse.ArgumentParser(description="Sideband LXMF Client")
 parser.add_argument("-v", "--verbose", action='store_true', default=False, help="increase logging verbosity")
 parser.add_argument("-c", "--config", action='store', default=None, help="specify path of config directory")
 parser.add_argument("-d", "--daemon", action='store_true', default=False, help="run as a daemon, without user interface")
+parser.add_argument("--export-settings", action='store', default=None, help="export application settings to file")
+parser.add_argument("--import-settings", action='store', default=None, help="import application settings from file")
 parser.add_argument("--version", action="version", version="sideband {version}".format(version=__version__))
 args = parser.parse_args()
 sys.argv = [sys.argv[0]]
@@ -22,8 +24,75 @@ import base64
 import threading
 import RNS.vendor.umsgpack as msgpack
 
+if args.export_settings:
+    from .sideband.core import SidebandCore
+    sideband = SidebandCore(
+        None,
+        config_path=args.config,
+        is_client=False,
+        verbose=(args.verbose or __debug_build__),
+        is_daemon=True,
+        load_config_only=True,
+    )
+
+    sideband.version_str = "v"+__version__+" "+__variant__
+
+    import json
+    export = sideband.config.copy()
+    for k in export:
+        if isinstance(export[k], bytes):
+            export[k] = RNS.hexrep(export[k], delimit=False)
+    try:
+        export_path = os.path.expanduser(args.export_settings)
+        with open(export_path, "wb") as export_file:
+            export_file.write(json.dumps(export, indent=4).encode("utf-8"))
+            print(f"Application settings written to {export_path}")
+        exit(0)
+
+    except Exception as e:
+        print(f"Could not write application settings to {export_path}. The contained exception was:\n{e}")
+        exit(1)
+
+elif args.import_settings:
+    from .sideband.core import SidebandCore
+    sideband = SidebandCore(
+        None,
+        config_path=args.config,
+        is_client=False,
+        verbose=(args.verbose or __debug_build__),
+        is_daemon=True,
+        load_config_only=True,
+    )
+
+    sideband.version_str = "v"+__version__+" "+__variant__
+
+    import json
+    addr_fields = ["lxmf_propagation_node", "last_lxmf_propagation_node", "nn_home_node", "telemetry_collector"]
+    try:
+        import_path = os.path.expanduser(args.import_settings)
+        imported = None
+        with open(import_path, "rb") as import_file:
+            json_data = import_file.read().decode("utf-8")
+            imported = json.loads(json_data)
+            for k in imported:
+                if k in addr_fields and imported[k] != None:
+                    imported[k] = bytes.fromhex(imported[k])
+                    if len(imported[k]) != RNS.Reticulum.TRUNCATED_HASHLENGTH//8:
+                        raise ValueError(f"Invalid hash length for {RNS.prettyhexrep(imported[k])}")
+
+        if imported:
+            sideband.config = imported
+            sideband.save_configuration()
+            while sideband.saving_configuration:
+                time.sleep(0.1)
+            print(f"Application settings imported from {import_path}")
+            exit(0)
+
+    except Exception as e:
+        print(f"Could not import application settings from {import_path}. The contained exception was:\n{e}")
+        exit(1)
+
 if not args.daemon:
-    import plyer
     from kivy.logger import Logger, LOG_LEVELS
     from PIL import Image as PilImage
     import io
@@ -74,12 +143,14 @@ if args.daemon:
     NewConv = DaemonElement; Telemetry = DaemonElement; ObjectDetails = DaemonElement; Announces = DaemonElement;
     Messages = DaemonElement; ts_format = DaemonElement; messages_screen_kv = DaemonElement; plyer = DaemonElement; multilingual_markup = DaemonElement;
     ContentNavigationDrawer = DaemonElement; DrawerList = DaemonElement; IconListItem = DaemonElement; escape_markup = DaemonElement;
+    SoundLoader = DaemonElement;
 
 else:
     from kivymd.app import MDApp
     app_superclass = MDApp
     from kivy.core.window import Window
     from kivy.core.clipboard import Clipboard
+    from kivy.core.audio import SoundLoader
     from kivy.base import EventLoop
     from kivy.clock import Clock
     from kivy.lang.builder import Builder
@@ -103,8 +174,9 @@ else:
     import kivy.core.image
     kivy.core.image.Logger = redirect_log()
 
-    if RNS.vendor.platformutils.get_platform() == "android":
+    if RNS.vendor.platformutils.is_android():
         from sideband.core import SidebandCore
+        import plyer
 
         from ui.layouts import *
         from ui.conversations import Conversations, MsgSync, NewConv
@@ -113,7 +185,7 @@ else:
         from ui.announces import Announces
         from ui.messages import Messages, ts_format, messages_screen_kv
         from ui.helpers import ContentNavigationDrawer, DrawerList, IconListItem
-        from ui.helpers import multilingual_markup
+        from ui.helpers import multilingual_markup, mdc
         from kivymd.toast import toast
 
         from jnius import cast
@@ -122,11 +194,15 @@ else:
         from android.permissions import request_permissions, check_permission
         from android.storage import primary_external_storage_path, secondary_external_storage_path
 
+        import pyogg
+        from pydub import AudioSegment
+
         from kivymd.utils.set_bars_colors import set_bars_colors
         android_api_version = autoclass('android.os.Build$VERSION').SDK_INT
 
     else:
         from .sideband.core import SidebandCore
+        import sbapp.plyer as plyer
 
         from .ui.layouts import *
         from .ui.conversations import Conversations, MsgSync, NewConv
@@ -135,7 +211,10 @@ else:
         from .ui.objectdetails import ObjectDetails
         from .ui.messages import Messages, ts_format, messages_screen_kv
         from .ui.helpers import ContentNavigationDrawer, DrawerList, IconListItem
-        from .ui.helpers import multilingual_markup
+        from .ui.helpers import multilingual_markup, mdc
+
+        import sbapp.pyogg as pyogg
+        from sbapp.pydub import AudioSegment
 
         class toast:
             def __init__(self, *kwargs):
@@ -193,12 +272,16 @@ class SidebandApp(MDApp):
         else:
             self.sideband = SidebandCore(self, config_path=self.config_path, is_client=False, verbose=(args.verbose or __debug_build__))
 
+        self.sideband.version_str = "v"+__version__+" "+__variant__
+
         self.set_ui_theme()
         self.font_config()
         self.update_input_language()
         self.dark_theme_text_color = dark_theme_text_color
 
         self.conversations_view = None
+        self.include_conversations = True
+        self.include_objects = False
         self.messages_view = None
         self.map = None
         self.map_layer = None
@@ -223,6 +306,14 @@ class SidebandApp(MDApp):
 
         self.attach_path = None
         self.attach_type = None
+        self.attach_dialog = None
+        self.rec_dialog = None
+        self.last_msg_audio = None
+        self.msg_sound = None
+        self.audio_msg_mode = LXMF.AM_OPUS_OGG
+        self.compat_error_dialog = None
+        self.rec_dialog_is_open = True
+        self.key_ptt_down = False
 
         Window.softinput_mode = "below_target"
         self.icon = self.sideband.asset_dir+"/icon.png"
@@ -386,6 +477,9 @@ class SidebandApp(MDApp):
         LabelBase.register(name="emoji",
             fn_regular=fb_path+"NotoEmoji-Regular.ttf")
 
+        LabelBase.register(name="defaultinput",
+            fn_regular=fb_path+"DefaultInput.ttf")
+
         LabelBase.register(name="combined",
             fn_regular=fb_path+"NotoSans-Regular.ttf",
             fn_bold=fb_path+"NotoSans-Bold.ttf",
@@ -395,12 +489,20 @@ class SidebandApp(MDApp):
     def update_input_language(self):
         language = self.sideband.config["input_language"]
         if language == None:
-            self.input_font = "Roboto"
-            RNS.log("Setting input language to default set", RNS.LOG_DEBUG)
+            self.input_font = "defaultinput"
         else:
             self.input_font = language
-            RNS.log("Setting input language to "+str(language), RNS.LOG_DEBUG)
+        
+        RNS.log("Setting input language to "+str(self.input_font), RNS.LOG_DEBUG)
 
+    # def modify_input_font(self, ids):
+    #     BIND_CLASSES = ["kivymd.uix.textfield.textfield.MDTextField",]
+    #     for e in ids:
+    #         te = ids[e]
+    #         ts = str(te).split(" ")[0].replace("<", "")
+    #         if ts in BIND_CLASSES:
+    #             RNS.log("MODIFYING "+str(e)+" to "+self.input_font)
+    #             te.font_name = self.input_font
 
     def update_ui_colors(self):
         if self.sideband.config["dark_ui"]:
@@ -419,6 +521,7 @@ class SidebandApp(MDApp):
                 self.color_hover  = colors["Light"]["AppBar"]
         
         self.apply_eink_mods()
+        self.set_bars_colors()
 
     def update_ui_theme(self):
         if self.sideband.config["dark_ui"]:
@@ -440,11 +543,54 @@ class SidebandApp(MDApp):
 
     def set_bars_colors(self):
         if RNS.vendor.platformutils.get_platform() == "android":
-            set_bars_colors(
-                self.theme_cls.primary_color,  # status bar color
-                [0,0,0,0],  # navigation bar color
-                "Light",                       # icons color of status bar
-            )
+
+            def set_navicons(set_dark_icons = False):
+                from android.runnable import run_on_ui_thread
+                from jnius import autoclass
+                WindowManager = autoclass("android.view.WindowManager$LayoutParams")
+                activity = autoclass("org.kivy.android.PythonActivity").mActivity
+                View = autoclass("android.view.View")
+
+                def uit_exec():
+                    window = activity.getWindow()
+                    window.clearFlags(WindowManager.FLAG_TRANSLUCENT_STATUS)
+                    window.addFlags(WindowManager.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+
+                    if set_dark_icons:
+                        window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR)
+                    else:
+                        window.getDecorView().setSystemUiVisibility(0)
+
+                return run_on_ui_thread(uit_exec)()
+
+            if self.sideband.config["dark_ui"]:
+                if self.sideband.config["eink_mode"] == True:
+                    set_bars_colors(
+                        self.theme_cls.primary_color,  # status bar color
+                        self.theme_cls.bg_light,       # nav bar color
+                        "Light",                       # icons color of status bar
+                    )
+                else:
+                    set_bars_colors(
+                        self.theme_cls.primary_color,
+                        self.theme_cls.bg_darkest,
+                        "Light")
+            else:
+                if self.sideband.config["eink_mode"] == True:
+                    set_bars_colors(
+                        self.theme_cls.primary_color,
+                        self.theme_cls.bg_light,
+                        "Light")
+                else:
+                    set_bars_colors(
+                        self.theme_cls.primary_color,
+                        self.theme_cls.bg_darkest,
+                        "Light")
+
+                try:
+                    set_navicons(set_dark_icons=True)
+                except Exception as e:
+                    RNS.trace_exception(e)
 
     def close_any_action(self, sender=None):
         self.open_conversations(direction="right")
@@ -597,6 +743,12 @@ class SidebandApp(MDApp):
                 request_permissions(["android.permission.POST_NOTIFICATIONS"])
             
         self.check_permissions()
+
+    def request_microphone_permission(self):
+        if RNS.vendor.platformutils.get_platform() == "android":
+            if not check_permission("android.permission.RECORD_AUDIO"):
+                RNS.log("Requesting microphone permission", RNS.LOG_DEBUG)
+                request_permissions(["android.permission.RECORD_AUDIO"])
 
     def check_storage_permission(self):
         storage_permissions_ok = False
@@ -784,6 +936,12 @@ class SidebandApp(MDApp):
             if self.conversations_view != None:
                 self.conversations_view.update()
 
+        if self.sideband.getstate("app.flags.new_ticket", allow_cache=True):
+            def cb(d):
+                self.sideband.message_router.reload_available_tickets()
+                self.sideband.setstate("app.flags.new_ticket", False)
+            Clock.schedule_once(cb, 1.5)
+
         if self.sideband.getstate("wants.viewupdate.conversations", allow_cache=True):
             if self.conversations_view != None:
                 self.conversations_view.update()
@@ -838,6 +996,7 @@ class SidebandApp(MDApp):
 
         EventLoop.window.bind(on_keyboard=self.keyboard_event)
         EventLoop.window.bind(on_key_down=self.keydown_event)
+        EventLoop.window.bind(on_key_up=self.keyup_event)
 
         if __variant__ != "":
             variant_str = " "+__variant__
@@ -848,6 +1007,17 @@ class SidebandApp(MDApp):
         self.root.ids.app_version_info.text = "Sideband v"+__version__+variant_str
         self.root.ids.nav_scrollview.effect_cls = ScrollEffect
         Clock.schedule_once(self.start_core, 0.25)
+
+    def keyup_event(self, instance, keyboard, keycode):
+        if self.keyboard_enabled:
+            if self.root.ids.screen_manager.current == "messages_screen":
+                if not self.rec_dialog_is_open:
+                    if not self.messages_view.ids.message_text.focus:
+                        if self.messages_view.ptt_enabled and keycode == 44:
+                            if self.key_ptt_down:
+                                self.key_ptt_down = False
+                                self.message_ptt_up_action()
+
 
     def keydown_event(self, instance, keyboard, keycode, text, modifiers):
         if self.keyboard_enabled:
@@ -882,6 +1052,38 @@ class SidebandApp(MDApp):
                             self.messages_view.ids.message_text.write_tab = True
                         Clock.schedule_once(tab_job, 0.15)
 
+                elif self.rec_dialog != None and self.rec_dialog_is_open:
+                        if text == " ":
+                            self.msg_rec_a_rec(None)
+                        elif keycode == 40:
+                            self.msg_rec_a_save(None)
+
+                elif not self.rec_dialog_is_open and not self.messages_view.ids.message_text.focus and self.messages_view.ptt_enabled and keycode == 44:
+                    if not self.key_ptt_down:
+                        self.key_ptt_down = True
+                        self.message_ptt_down_action()
+
+                elif len(modifiers) > 1 and "shift" in modifiers and "ctrl" in modifiers:
+                    def clear_att():
+                        if self.attach_path != None:
+                            self.attach_path = None
+                            self.attach_type = None
+                            self.update_message_widgets()
+                    if text == "a":
+                        clear_att(); self.message_attachment_action(None)
+                    if text == "i":
+                        clear_att(); self.message_attach_action(attach_type="defimg")
+                    if text == "f":
+                        clear_att(); self.message_attach_action(attach_type="file")
+                    if text == "v":
+                        clear_att()
+                        self.audio_msg_mode = LXMF.AM_OPUS_OGG
+                        self.message_attach_action(attach_type="audio")
+                    if text == "c":
+                        clear_att()
+                        self.audio_msg_mode = LXMF.AM_CODEC2_2400
+                        self.message_attach_action(attach_type="audio")
+
             if len(modifiers) > 0:
                 if modifiers[0] == "ctrl":
                     if text == "q":
@@ -889,7 +1091,10 @@ class SidebandApp(MDApp):
                     
                     if text == "w":
                         if self.root.ids.screen_manager.current == "conversations_screen":
-                            self.quit_action(self)
+                            if self.include_conversations and not self.include_objects:
+                                self.quit_action(self)
+                            else:
+                                self.conversations_action(direction="right")
                         elif self.root.ids.screen_manager.current == "map_settings_screen":
                             self.close_sub_map_action()
                         elif self.root.ids.screen_manager.current == "object_details_screen":
@@ -937,13 +1142,18 @@ class SidebandApp(MDApp):
                         else:
                             self.telemetry_action(self)
 
-                    if text == "o":
-                        # if self.root.ids.screen_manager.current == "telemetry_screen":
+                    if text == "u":
                         self.map_display_own_telemetry()
+
+                    if text == "o":
+                        self.objects_action()
 
                     if text == "r":
                         if self.root.ids.screen_manager.current == "conversations_screen":
-                            self.lxmf_sync_action(self)
+                            if self.include_objects:
+                                self.conversations_action(self, direction="right")
+                            else:
+                                self.lxmf_sync_action(self)
                         elif self.root.ids.screen_manager.current == "telemetry_screen":
                             self.conversations_action(self, direction="right")
                         elif self.root.ids.screen_manager.current == "object_details_screen":
@@ -967,10 +1177,13 @@ class SidebandApp(MDApp):
             # Handle escape/back
             if key == 27:
                 if self.root.ids.screen_manager.current == "conversations_screen":
-                    if time.time() - self.last_exit_event < 2:
-                        self.quit_action(self)
+                    if not self.include_conversations and self.include_objects:
+                        self.conversations_action(direction="right")
                     else:
-                        self.last_exit_event = time.time()
+                        if time.time() - self.last_exit_event < 2:
+                            self.quit_action(self)
+                        else:
+                            self.last_exit_event = time.time()
 
                 else:
                     if self.root.ids.screen_manager.current == "hardware_rnode_screen":
@@ -1112,12 +1325,18 @@ class SidebandApp(MDApp):
         Clock.schedule_once(cbu, 0.15+0.25)
 
     def open_conversation(self, context_dest, direction="left"):
+        self.rec_dialog_is_open = False
         self.outbound_mode_paper = False
         self.outbound_mode_command = False
-        if self.sideband.config["propagation_by_default"]:
-            self.outbound_mode_propagation = True
+        self.outbound_mode_propagation = False
+        if self.include_objects and not self.include_conversations:
+            if self.sideband.config["propagation_by_default"]:
+                self.outbound_mode_propagation = True
+            else:
+                self.outbound_mode_command = True
         else:
-            self.outbound_mode_propagation = False
+            if self.sideband.config["propagation_by_default"]:
+                self.outbound_mode_propagation = True
 
         self.root.ids.screen_manager.transition.direction = direction
         self.messages_view = Messages(self, context_dest)
@@ -1153,11 +1372,17 @@ class SidebandApp(MDApp):
         Clock.schedule_once(scb, 0.33)
 
     def close_messages_action(self, sender=None):
+        self.rec_dialog_is_open = False
         self.open_conversations(direction="right")
 
     def message_send_action(self, sender=None):
+        self.rec_dialog_is_open = False
         if self.messages_view.ids.message_text.text == "":
-            return
+            if not (self.attach_type != None and self.attach_path != None):
+                return
+
+            if self.outbound_mode_command:
+                return
 
         def cb(dt):
             self.message_send_dispatch(sender)
@@ -1165,6 +1390,10 @@ class SidebandApp(MDApp):
 
     def message_send_dispatch(self, sender=None):
         self.messages_view.ids.message_send_button.disabled = True
+        def cb(dt):
+            self.messages_view.ids.message_send_button.disabled = False
+        Clock.schedule_once(cb, 0.5)
+
         if self.root.ids.screen_manager.current == "messages_screen":
             if self.outbound_mode_propagation and self.sideband.message_router.get_outbound_propagation_node() == None:
                 self.messages_view.send_error_dialog = MDDialog(
@@ -1183,10 +1412,14 @@ class SidebandApp(MDApp):
 
             else:
                 msg_content = self.messages_view.ids.message_text.text
+                if msg_content == "":
+                    msg_content = " "
+
                 context_dest = self.messages_view.ids.messages_scrollview.active_conversation
 
                 attachment = None
                 image = None
+                audio = None
                 if not self.outbound_mode_command and not self.outbound_mode_paper:
                     if self.attach_type != None and self.attach_path != None:
                         try:
@@ -1196,6 +1429,14 @@ class SidebandApp(MDApp):
                             if self.attach_type == "file":
                                 with open(self.attach_path, "rb") as af:
                                     attachment = [fbn, af.read()]
+
+                            if self.attach_type == "audio":
+                                if self.audio_msg_mode == LXMF.AM_OPUS_OGG:
+                                    with open(self.attach_path, "rb") as af:
+                                        audio = [self.audio_msg_mode, af.read()]
+                                elif self.audio_msg_mode >= LXMF.AM_CODEC2_700C and self.audio_msg_mode <= LXMF.AM_CODEC2_3200:
+                                    with open(self.attach_path, "rb") as af:
+                                        audio = [self.audio_msg_mode, af.read()]
 
                             elif self.attach_type == "lbimg":
                                 max_size = 320, 320
@@ -1268,7 +1509,7 @@ class SidebandApp(MDApp):
                         self.messages_view.ids.messages_scrollview.scroll_y = 0
                         self.jobs(0)
                 
-                elif self.sideband.send_message(msg_content, context_dest, self.outbound_mode_propagation, attachment = attachment, image = image):
+                elif self.sideband.send_message(msg_content, context_dest, self.outbound_mode_propagation, attachment = attachment, image = image, audio = audio):
                     self.messages_view.ids.message_text.text = ""
                     self.messages_view.ids.messages_scrollview.scroll_y = 0
                     self.jobs(0)
@@ -1286,10 +1527,6 @@ class SidebandApp(MDApp):
                         ],
                     )
                     self.messages_view.send_error_dialog.open()
-        
-        def cb(dt):
-            self.messages_view.ids.message_send_button.disabled = False
-        Clock.schedule_once(cb, 0.5)
 
     def peer_show_location_action(self, sender):
         if self.root.ids.screen_manager.current == "messages_screen":
@@ -1414,46 +1651,431 @@ class SidebandApp(MDApp):
                 ok_button.bind(on_release=ate_dialog.dismiss)
                 ate_dialog.open()
 
-    def message_attach_action(self, attach_type=None):
+    def display_codec2_error(self):
+        if self.compat_error_dialog == None:
+            def cb(sender):
+                self.compat_error_dialog.dismiss()
+            self.compat_error_dialog = MDDialog(
+                title="Could not load Codec2",
+                text="The Codec2 library could not be loaded. This likely means that you do not have the [b]codec2[/b] package or shared library installed on your system.\n\nThis library is normally installed automatically when Sideband is installed, but on some systems, this is not possible.\n\nTry installing it with a command such as [b]pamac install codec2[/b] or [b]apt install codec2[/b], or by compiling it from source for this system.",
+                buttons=[
+                    MDRectangleFlatButton(
+                        text="OK",
+                        font_size=dp(18),
+                        on_release=cb
+                    )
+                ],
+            )
+        self.compat_error_dialog.open()
+
+    def play_audio_field(self, audio_field):
+        if RNS.vendor.platformutils.is_darwin():
+            if self.compat_error_dialog == None:
+                def cb(sender):
+                    self.compat_error_dialog.dismiss()
+                self.compat_error_dialog = MDDialog(
+                    title="Unsupported Feature on macOS",
+                    text="Audio message functionality is currently only implemented on Linux and Android. Please support the development if you need this feature on macOS.",
+                    buttons=[
+                        MDRectangleFlatButton(
+                            text="OK",
+                            font_size=dp(18),
+                            on_release=cb
+                        )
+                    ],
+                )
+            self.compat_error_dialog.open()
+            return
+        elif RNS.vendor.platformutils.is_windows():
+            if self.compat_error_dialog == None:
+                def cb(sender):
+                    self.compat_error_dialog.dismiss()
+                self.compat_error_dialog = MDDialog(
+                    title="Unsupported Feature on Windows",
+                    text="Audio message functionality is currently only implemented on Linux and Android. Please support the development if you need this feature on Windows.",
+                    buttons=[
+                        MDRectangleFlatButton(
+                            text="OK",
+                            font_size=dp(18),
+                            on_release=cb
+                        )
+                    ],
+                )
+            self.compat_error_dialog.open()
+            return
+        else:
+            try:
+                temp_path = None
+                if self.last_msg_audio != audio_field[1]:
+                    RNS.log("Reloading audio source", RNS.LOG_DEBUG)
+                    if len(audio_field[1]) > 10:
+                        self.last_msg_audio = audio_field[1]
+                    else:
+                        self.last_msg_audio = None
+                        return
+
+                    if audio_field[0] == LXMF.AM_OPUS_OGG:
+                        temp_path = self.sideband.rec_cache+"/msg.ogg"
+                        with open(temp_path, "wb") as af:
+                            af.write(self.last_msg_audio)
+
+                    elif audio_field[0] >= LXMF.AM_CODEC2_700C and audio_field[0] <= LXMF.AM_CODEC2_3200:
+                        temp_path = self.sideband.rec_cache+"/msg.ogg"
+                        from sideband.audioproc import samples_to_ogg, decode_codec2, detect_codec2
+                        
+                        target_rate = 8000
+                        if RNS.vendor.platformutils.is_linux():
+                            target_rate = 48000
+
+                        if detect_codec2():
+                            if samples_to_ogg(decode_codec2(audio_field[1], audio_field[0]), temp_path, input_rate=8000, output_rate=target_rate):
+                                RNS.log("Wrote OGG file to: "+temp_path, RNS.LOG_DEBUG)
+                            else:
+                                RNS.log("OGG write failed", RNS.LOG_DEBUG)
+                        else:
+                            self.last_msg_audio = None
+                            self.display_codec2_error()
+                            return
+                    
+                    else:
+                        raise NotImplementedError(audio_field[0])
+
+                    if self.msg_sound == None:
+                        if RNS.vendor.platformutils.is_android():
+                            from plyer import audio
+                            self.request_microphone_permission()
+                        else:
+                            from sbapp.plyer import audio
+                        
+                        self.msg_sound = audio
+
+                    self.msg_sound._file_path = temp_path
+                    self.msg_sound.reload()
+
+                if self.msg_sound != None and self.msg_sound.playing():
+                    RNS.log("Stopping playback", RNS.LOG_DEBUG)
+                    self.msg_sound.stop()
+                else:
+                    if self.msg_sound != None:
+                        RNS.log("Starting playback", RNS.LOG_DEBUG)
+                        self.msg_sound.play()
+                    else:
+                        RNS.log("Playback was requested, but no audio data was loaded for playback", RNS.LOG_ERROR)
+
+            except Exception as e:
+                RNS.log("Error while playing message audio:"+str(e))
+                RNS.trace_exception(e)
+
+    def message_ptt_down_action(self, sender=None):
+        if self.sideband.ui_recording:
+            return
+
+        self.sideband.ui_started_recording()
+        self.audio_msg_mode = LXMF.AM_CODEC2_2400
+        self.message_attach_action(attach_type="audio", nodialog=True)
+        if self.rec_dialog == None:
+            self.message_init_rec_dialog()
+        self.rec_dialog.recording = True
+        el_button = self.messages_view.ids.message_ptt_button
+        el_icon = self.messages_view.ids.message_ptt_button.children[0].children[1]
+        el_button.theme_text_color="Custom"
+        el_button.text_color=mdc("Orange","400")
+        el_button.line_color=mdc("Orange","400")
+        el_icon.theme_text_color="Custom"
+        el_icon.text_color=mdc("Orange","400")
+        def cb(dt):
+            self.msg_audio.start()
+        Clock.schedule_once(cb, 0.15)
+        
+
+    def message_ptt_up_action(self, sender=None):
+        if not self.sideband.ui_recording:
+            return
+
+        self.rec_dialog.recording = False
+        el_button = self.messages_view.ids.message_ptt_button
+        el_icon = self.messages_view.ids.message_ptt_button.children[0].children[1]
+        el_button.theme_text_color="Custom"
+        el_button.text_color=mdc("BlueGray","500")
+        el_button.line_color=mdc("BlueGray","500")
+        el_icon.theme_text_color="Custom"
+        el_icon.text_color=mdc("BlueGray","500")
+        def cb_s(dt):
+            try:
+                self.msg_audio.stop()
+            except Exception as e:
+                RNS.log("An error occurred while stopping recording: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
+
+            self.sideband.ui_stopped_recording()
+            if self.message_process_audio():
+                self.message_send_action()
+        Clock.schedule_once(cb_s, 0.35)
+
+    def message_process_audio(self):
+        if self.audio_msg_mode == LXMF.AM_OPUS_OGG:
+            from sideband.audioproc import voice_processing
+            proc_path = voice_processing(self.msg_audio._file_path)
+            if proc_path:
+                self.attach_path = proc_path
+                os.unlink(self.msg_audio._file_path)
+                RNS.log("Using voice-processed OPUS data in OGG container", RNS.LOG_DEBUG)
+            else:
+                self.attach_path = self.msg_audio._file_path
+                RNS.log("Using unmodified OPUS data in OGG container", RNS.LOG_DEBUG)
+        else:
+            ap_start = time.time()
+            from sideband.audioproc import voice_processing
+            proc_path = voice_processing(self.msg_audio._file_path)
+
+            if proc_path:
+                opus_file = pyogg.OpusFile(proc_path)
+                RNS.log("Using voice-processed audio for codec2 encoding", RNS.LOG_DEBUG)
+            else:
+                opus_file = pyogg.OpusFile(self.msg_audio._file_path)
+                RNS.log("Using unprocessed audio data for codec2 encoding", RNS.LOG_DEBUG)
+
+            RNS.log(f"OPUS LOAD {opus_file.frequency}Hz {opus_file.bytes_per_sample*8}bit {opus_file.channels}ch")
+
+            audio = AudioSegment(
+                bytes(opus_file.as_array()),
+                frame_rate=opus_file.frequency,
+                sample_width=opus_file.bytes_per_sample, 
+                channels=opus_file.channels,
+            )
+            audio = audio.split_to_mono()[0]
+            audio = audio.apply_gain(-audio.max_dBFS)
+            
+            if self.audio_msg_mode >= LXMF.AM_CODEC2_700C and self.audio_msg_mode <= LXMF.AM_CODEC2_3200:
+                audio = audio.set_frame_rate(8000)
+                audio = audio.set_sample_width(2)
+                samples = audio.get_array_of_samples()
+
+                from sideband.audioproc import encode_codec2, detect_codec2
+                if detect_codec2():
+                    encoded = encode_codec2(samples, self.audio_msg_mode)
+
+                    ap_duration = time.time() - ap_start
+                    RNS.log("Audio processing complete in "+RNS.prettytime(ap_duration), RNS.LOG_DEBUG)
+
+                    export_path = self.sideband.rec_cache+"/recording.enc"
+                    with open(export_path, "wb") as export_file:
+                        export_file.write(encoded)
+                    self.attach_path = export_path
+                    os.unlink(self.msg_audio._file_path)
+                else:
+                    self.display_codec2_error()
+                    return False
+
+        return True
+
+    def message_init_rec_dialog(self):
+        ss = int(dp(18))
+        if RNS.vendor.platformutils.is_android():
+            from plyer import audio
+            self.request_microphone_permission()
+        else:
+            from sbapp.plyer import audio
+
+        self.msg_audio = audio
+        self.msg_audio._file_path = self.sideband.rec_cache+"/recording.ogg"
+
+        def a_rec_action(sender):
+            if not self.rec_dialog.recording:
+                self.sideband.ui_started_recording()
+                RNS.log("Starting recording...") # TODO: Remove
+                self.rec_dialog.recording = True
+                el = self.rec_dialog.rec_item.children[0].children[0]
+                el.ttc = el.theme_text_color; el.tc = el.text_color
+                el.theme_text_color="Custom"
+                el.text_color=mdc("Red","400")
+                el.icon = "stop-circle"
+                self.rec_dialog.rec_item.text = "[size="+str(ss)+"]Stop Recording[/size]"
+                def cb(dt):
+                    self.msg_audio.start()
+                Clock.schedule_once(cb, 0.10)
+
+            else:
+                self.sideband.ui_stopped_recording()
+                RNS.log("Stopping recording...") # TODO: Remove
+                self.rec_dialog.recording = False
+                self.rec_dialog.rec_item.text = "[size="+str(ss)+"]Start Recording[/size]"
+                el = self.rec_dialog.rec_item.children[0].children[0]
+                el.icon = "record"
+                el.text_color = self.theme_cls._get_text_color()
+                self.rec_dialog.play_item.disabled = False
+                self.rec_dialog.save_item.disabled = False
+                self.msg_audio.stop()
+
+        self.msg_rec_a_rec = a_rec_action
+
+        def a_play(sender):
+            if self.rec_dialog.recording:
+                a_rec_action(sender)
+
+            if not self.rec_dialog.playing:
+                RNS.log("Playing recording...", RNS.LOG_DEBUG)
+                self.rec_dialog.playing = True
+                self.rec_dialog.play_item.children[0].children[0].icon = "stop"
+                self.rec_dialog.play_item.text = "[size="+str(ss)+"]Stop[/size]"
+                self.msg_audio.play()
+            else:
+                RNS.log("Stopping playback...", RNS.LOG_DEBUG)
+                self.rec_dialog.playing = False
+                self.rec_dialog.play_item.children[0].children[0].icon = "play"
+                self.rec_dialog.play_item.text = "[size="+str(ss)+"]Play[/size]"
+                self.msg_audio.stop()
+
+        self.msg_rec_a_play = a_play
+
+        def a_finished(sender):
+            RNS.log("Playback finished", RNS.LOG_DEBUG)
+            self.rec_dialog.playing = False
+            self.rec_dialog.play_item.children[0].children[0].icon = "play"
+            self.rec_dialog.play_item.text = "[size="+str(ss)+"]Play[/size]"
+            
+        self.msg_audio._finished_callback = a_finished
+            
+        def a_save(sender):
+            if self.rec_dialog.recording:
+                a_rec_action(sender)
+            self.rec_dialog_is_open = False
+            self.rec_dialog.dismiss()
+
+            try:
+                if self.audio_msg_mode == LXMF.AM_OPUS_OGG:
+                    from sideband.audioproc import voice_processing
+                    proc_path = voice_processing(self.msg_audio._file_path)
+                    if proc_path:
+                        self.attach_path = proc_path
+                        os.unlink(self.msg_audio._file_path)
+                        RNS.log("Using voice-processed OPUS data in OGG container", RNS.LOG_DEBUG)
+                    else:
+                        self.attach_path = self.msg_audio._file_path
+                        RNS.log("Using unmodified OPUS data in OGG container", RNS.LOG_DEBUG)
+                else:
+                    self.message_process_audio()
+
+                self.update_message_widgets()
+                toast("Added recorded audio to message")
+            
+            except Exception as e:
+                RNS.trace_exception(e)
+
+        self.msg_rec_a_save = a_save
+
+        cancel_button = MDRectangleFlatButton(text="Cancel", font_size=dp(18))
+        rec_item = DialogItem(IconLeftWidget(icon="record", on_release=a_rec_action), text="[size="+str(ss)+"]Start Recording[/size]", on_release=a_rec_action)
+        play_item = DialogItem(IconLeftWidget(icon="play", on_release=a_play), text="[size="+str(ss)+"]Play[/size]", on_release=a_play, disabled=True)
+        save_item = DialogItem(IconLeftWidget(icon="content-save-move-outline", on_release=a_save), text="[size="+str(ss)+"]Save to message[/size]", on_release=a_save, disabled=True)
+        self.rec_dialog = MDDialog(
+            title="Record Audio",
+            type="simple",
+            # text="Test\n",
+            items=[
+                rec_item,
+                play_item,
+                save_item,
+            ],
+            buttons=[ cancel_button ],
+            width_offset=dp(32),
+        )
+        cancel_button.bind(on_release=self.rec_dialog.dismiss)
+        self.rec_dialog.recording = False
+        self.rec_dialog.playing = False
+        self.rec_dialog.rec_item = rec_item
+        self.rec_dialog.play_item = play_item
+        self.rec_dialog.save_item = save_item
+
+    def message_record_audio_action(self):
+        ss = int(dp(18))
+        if self.rec_dialog == None:
+            self.message_init_rec_dialog()
+
+        else:
+            self.rec_dialog.play_item.disabled = True
+            self.rec_dialog.save_item.disabled = True
+            self.rec_dialog.recording = False
+            self.rec_dialog.rec_item.text = "[size="+str(ss)+"]Start Recording[/size]"
+            self.rec_dialog.rec_item.children[0].children[0].icon = "record"
+
+        self.rec_dialog.open()
+        self.rec_dialog_is_open = True
+
+    def message_attach_action(self, attach_type=None, nodialog=False):
+        file_attach_types = ["lbimg", "defimg", "hqimg", "file"]
+        rec_attach_types = ["audio"]
+        
         self.attach_path = None
-        self.attach_type = attach_type
-        self.message_select_file_action()
+        self.rec_dialog_is_open = False
+        if attach_type in file_attach_types:
+            self.attach_type = attach_type
+            if not nodialog:
+                self.message_select_file_action()
+        elif attach_type in rec_attach_types:
+            self.attach_type = attach_type
+            if not nodialog:
+                self.message_record_audio_action()
 
     def message_attachment_action(self, sender):
+        self.rec_dialog_is_open = False
         if self.attach_path == None:
-            attach_dialog = None
             def a_img_lb(sender):
-                attach_dialog.dismiss()
+                self.attach_dialog.dismiss()
                 self.message_attach_action(attach_type="lbimg")
             def a_img_def(sender):
-                attach_dialog.dismiss()
+                self.attach_dialog.dismiss()
                 self.message_attach_action(attach_type="defimg")
             def a_img_hq(sender):
-                attach_dialog.dismiss()
+                self.attach_dialog.dismiss()
                 self.message_attach_action(attach_type="hqimg")
             def a_file(sender):
-                attach_dialog.dismiss()
+                self.attach_dialog.dismiss()
                 self.message_attach_action(attach_type="file")
+            def a_audio_hq(sender):
+                self.attach_dialog.dismiss()
+                self.audio_msg_mode = LXMF.AM_OPUS_OGG
+                self.message_attach_action(attach_type="audio")
+            def a_audio_lb(sender):
+                self.attach_dialog.dismiss()
+                self.audio_msg_mode = LXMF.AM_CODEC2_2400
+                self.message_attach_action(attach_type="audio")
 
-            ss = int(dp(18))
-            cancel_button = MDRectangleFlatButton(text="Cancel", font_size=dp(18))
-            attach_dialog = MDDialog(
-                title="Add Attachment",
-                type="simple",
-                text="Select the type of attachment you want to send with this message\n",
-                items=[
-                    DialogItem(IconLeftWidget(icon="message-image-outline"), text="[size="+str(ss)+"]Low-bandwidth Image[/size]", on_release=a_img_lb),
-                    DialogItem(IconLeftWidget(icon="file-image"), text="[size="+str(ss)+"]Medium Image[/size]", on_release=a_img_def),
-                    DialogItem(IconLeftWidget(icon="image-outline"), text="[size="+str(ss)+"]High-res Image[/size]", on_release=a_img_hq),
-                    DialogItem(IconLeftWidget(icon="file-outline"), text="[size="+str(ss)+"]File Attachment[/size]", on_release=a_file),
-                ],
-                buttons=[ cancel_button ],
-                width_offset=dp(12),
-            )
+            if self.attach_dialog == None:
+                ss = int(dp(18))
+                cancel_button = MDRectangleFlatButton(text="Cancel", font_size=dp(18))
+                ad_items = [
+                        DialogItem(IconLeftWidget(icon="message-image-outline", on_release=a_img_lb), text="[size="+str(ss)+"]Low-bandwidth Image[/size]", on_release=a_img_lb),
+                        DialogItem(IconLeftWidget(icon="file-image", on_release=a_img_def), text="[size="+str(ss)+"]Medium Image[/size]", on_release=a_img_def),
+                        DialogItem(IconLeftWidget(icon="image-outline", on_release=a_img_hq), text="[size="+str(ss)+"]High-res Image[/size]", on_release=a_img_hq),
+                        DialogItem(IconLeftWidget(icon="account-voice", on_release=a_audio_lb), text="[size="+str(ss)+"]Low-bandwidth Voice[/size]", on_release=a_audio_lb),
+                        DialogItem(IconLeftWidget(icon="microphone-message", on_release=a_audio_hq), text="[size="+str(ss)+"]High-quality Voice[/size]", on_release=a_audio_hq),
+                        DialogItem(IconLeftWidget(icon="file-outline", on_release=a_file), text="[size="+str(ss)+"]File Attachment[/size]", on_release=a_file)]
+                
+                if RNS.vendor.platformutils.is_windows():
+                    ad_items.pop(3)
+                    ad_items.pop(3)
 
-            cancel_button.bind(on_release=attach_dialog.dismiss)
-            attach_dialog.open()
-            attach_dialog.update_width()
+                if RNS.vendor.platformutils.is_darwin():
+                    ad_items.pop(3)
+                    ad_items.pop(3)
+
+                if RNS.vendor.platformutils.is_android() and android_api_version < 29:
+                    ad_items.pop(3)
+                    ad_items.pop(3)
+
+                self.attach_dialog = MDDialog(
+                    title="Add Attachment",
+                    type="simple",
+                    text="Select the type of attachment you want to send with this message\n",
+                    items=ad_items,
+                    buttons=[ cancel_button ],
+                    width_offset=dp(32),
+                )
+
+                cancel_button.bind(on_release=self.attach_dialog.dismiss)
+
+            self.attach_dialog.open()
 
         else:
             self.attach_path = None
@@ -1520,12 +2142,36 @@ class SidebandApp(MDApp):
                 keys_str = "The crytographic keys for the destination address are unknown at this time. You can wait for an announce to arrive, or query the network for the necessary keys."
                 self.messages_view.ids.nokeys_text.text = keys_str
             self.widget_hide(self.messages_view.ids.message_input_part, True)
+            self.widget_hide(self.messages_view.ids.message_ptt, True)
             self.widget_hide(self.messages_view.ids.no_keys_part, False)
 
 
     ### Conversations screen
     ######################################       
     def conversations_action(self, sender=None, direction="left", no_transition=False):
+        self.rec_dialog_is_open = False
+        if self.include_objects:
+            self.include_conversations = True
+            self.include_objects = False
+            self.conversations_view.update()
+
+        if no_transition:
+            self.root.ids.screen_manager.transition = self.no_transition
+        else:
+            self.root.ids.screen_manager.transition = self.slide_transition
+            self.root.ids.screen_manager.transition.direction = direction
+
+        self.open_conversations(direction=direction)
+
+        if no_transition:
+            self.root.ids.screen_manager.transition = self.slide_transition
+
+    def objects_action(self, sender=None, direction="left", no_transition=False):
+        if self.include_conversations:
+            self.include_conversations = False
+            self.include_objects = True
+            self.conversations_view.update()
+
         if no_transition:
             self.root.ids.screen_manager.transition = self.no_transition
         else:
@@ -1813,7 +2459,12 @@ class SidebandApp(MDApp):
             self.information_screen.ids.information_scrollview.effect_cls = ScrollEffect
             self.information_screen.ids.information_logo.icon = self.sideband.asset_dir+"/rns_256.png"
 
-            info = "This is "+self.root.ids.app_version_info.text+", on RNS v"+RNS.__version__+" and LXMF v"+LXMF.__version__+".\n\nHumbly build using the following open components:\n\n - [b]Reticulum[/b] (MIT License)\n - [b]LXMF[/b] (MIT License)\n - [b]KivyMD[/b] (MIT License)\n - [b]Kivy[/b] (MIT License)\n - [b]GeoidHeight[/b] (LGPL License)\n - [b]Python[/b] (PSF License)"+"\n\nGo to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project.\n\nThe Sideband app is Copyright (c) 2024 Mark Qvist / unsigned.io\n\nPermission is granted to freely share and distribute binary copies of Sideband v"+__version__+" "+__variant__+", so long as no payment or compensation is charged for said distribution or sharing.\n\nIf you were charged or paid anything for this copy of Sideband, please report it to [b]license@unsigned.io[/b].\n\nTHIS IS EXPERIMENTAL SOFTWARE - SIDEBAND COMES WITH ABSOLUTELY NO WARRANTY - USE AT YOUR OWN RISK AND RESPONSIBILITY"
+            str_comps  = " - [b]Reticulum[/b] (MIT License)\n - [b]LXMF[/b] (MIT License)\n - [b]KivyMD[/b] (MIT License)"
+            str_comps += "\n - [b]Kivy[/b] (MIT License)\n - [b]Codec2[/b] (LGPL License)\n - [b]PyCodec2[/b] (BSD-3 License)"
+            str_comps += "\n - [b]PyDub[/b] (MIT License)\n - [b]PyOgg[/b] (Public Domain)"
+            str_comps += "\n - [b]GeoidHeight[/b] (LGPL License)\n - [b]Python[/b] (PSF License)"
+            str_comps += "\n\nGo to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project.\n\nThe Sideband app is Copyright (c) 2024 Mark Qvist / unsigned.io\n\nPermission is granted to freely share and distribute binary copies of Sideband v"+__version__+" "+__variant__+", so long as no payment or compensation is charged for said distribution or sharing.\n\nIf you were charged or paid anything for this copy of Sideband, please report it to [b]license@unsigned.io[/b].\n\nTHIS IS EXPERIMENTAL SOFTWARE - SIDEBAND COMES WITH ABSOLUTELY NO WARRANTY - USE AT YOUR OWN RISK AND RESPONSIBILITY"
+            info = "This is "+self.root.ids.app_version_info.text+", on RNS v"+RNS.__version__+" and LXMF v"+LXMF.__version__+".\n\nHumbly build using the following open components:\n\n"+str_comps
             self.information_screen.ids.information_info.text = info
             self.information_screen.ids.information_info.bind(on_ref_press=link_exec)
 
@@ -1972,11 +2623,9 @@ class SidebandApp(MDApp):
                     if sender != self.settings_screen.ids.settings_lang_hebrew:
                         self.settings_screen.ids.settings_lang_hebrew.active = False
                     
-                    RNS.log("Sender: "+str(sender))
-
                     if self.settings_screen.ids.settings_lang_default.active:
                         self.sideband.config["input_language"] = None
-                        self.settings_screen.ids.settings_display_name.font_name = ""
+                        self.settings_screen.ids.settings_display_name.font_name = "defaultinput"
                     elif self.settings_screen.ids.settings_lang_chinese.active:
                         self.sideband.config["input_language"] = "chinese"
                         self.settings_screen.ids.settings_display_name.font_name = "chinese"
@@ -1994,7 +2643,7 @@ class SidebandApp(MDApp):
                         self.settings_screen.ids.settings_display_name.font_name = "hebrew"
                     else:
                         self.sideband.config["input_language"] = None
-                        self.settings_screen.ids.settings_display_name.font_name = ""
+                        self.settings_screen.ids.settings_display_name.font_name = "defaultinput"
 
 
                     self.sideband.save_configuration()
@@ -2012,6 +2661,11 @@ class SidebandApp(MDApp):
 
             def save_display_style_in_contact_list(sender=None, event=None):
                 self.sideband.config["display_style_in_contact_list"] = self.settings_screen.ids.display_style_in_contact_list.active
+                self.sideband.save_configuration()
+                self.sideband.setstate("wants.viewupdate.conversations", True)
+
+            def save_display_style_from_trusted_only(sender=None, event=None):
+                self.sideband.config["display_style_from_all"] = not self.settings_screen.ids.display_style_from_trusted_only.active
                 self.sideband.save_configuration()
                 self.sideband.setstate("wants.viewupdate.conversations", True)
 
@@ -2039,6 +2693,11 @@ class SidebandApp(MDApp):
                 self.sideband.config["lxmf_ignore_unknown"] = self.settings_screen.ids.settings_lxmf_ignore_unknown.active
                 self.sideband.save_configuration()
 
+            def save_lxmf_ignore_invalid_stamps(sender=None, event=None):
+                self.sideband.config["lxmf_ignore_invalid_stamps"] = self.settings_screen.ids.settings_ignore_invalid_stamps.active
+                self.sideband.save_configuration()
+                self.sideband.update_ignore_invalid_stamps()
+
             def save_lxmf_sync_limit(sender=None, event=None):
                 self.sideband.config["lxmf_sync_limit"] = self.settings_screen.ids.settings_lxmf_sync_limit.active
                 self.sideband.save_configuration()
@@ -2062,6 +2721,16 @@ class SidebandApp(MDApp):
 
                     self.sideband.config["print_command"] = new_cmd.strip()
                     self.settings_screen.ids.settings_print_command.text = self.sideband.config["print_command"]
+                    self.sideband.save_configuration()
+
+            def save_lxmf_stamp_cost(sender=None, event=None, save=True):
+                if self.settings_screen.ids.settings_lxmf_require_stamps.active:
+                    self.widget_hide(self.settings_screen.ids.lxmf_costslider_container, False)
+                else:
+                    self.widget_hide(self.settings_screen.ids.lxmf_costslider_container, True)
+
+                if save:
+                    self.sideband.config["lxmf_require_stamps"] = self.settings_screen.ids.settings_lxmf_require_stamps.active
                     self.sideband.save_configuration()
 
             def save_lxmf_periodic_sync(sender=None, event=None, save=True):
@@ -2092,6 +2761,19 @@ class SidebandApp(MDApp):
                 self.settings_screen.ids.settings_lxmf_sync_periodic.text = "Auto sync every "+interval_text
                 if save:
                     self.sideband.config["lxmf_sync_interval"] = interval
+                    self.sideband.save_configuration()
+
+            def stamp_cost_change(sender=None, event=None, save=True):
+                slider_val = int(self.settings_screen.ids.settings_lxmf_require_stamps_cost.value)
+                cost_text = str(slider_val)
+
+                self.settings_screen.ids.settings_lxmf_require_stamps_label.text = f"Require stamp cost {cost_text} for incoming messages"
+                if save:
+                    if slider_val > 32:
+                        slider_val = 32
+                    if slider_val < 1:
+                        slider_val = 1
+                    self.sideband.config["lxmf_inbound_stamp_cost"] = slider_val
                     self.sideband.save_configuration()
 
             self.settings_screen.ids.settings_lxmf_address.text = RNS.hexrep(self.sideband.lxmf_destination.hash, delimit=False)
@@ -2131,6 +2813,9 @@ class SidebandApp(MDApp):
             self.settings_screen.ids.display_style_in_contact_list.active = self.sideband.config["display_style_in_contact_list"]
             self.settings_screen.ids.display_style_in_contact_list.bind(active=save_display_style_in_contact_list)
 
+            self.settings_screen.ids.display_style_from_trusted_only.active = not self.sideband.config["display_style_from_all"]
+            self.settings_screen.ids.display_style_from_trusted_only.bind(active=save_display_style_from_trusted_only)
+
             self.settings_screen.ids.settings_advanced_statistics.active = self.sideband.config["advanced_stats"]
             self.settings_screen.ids.settings_advanced_statistics.bind(active=save_advanced_stats)
 
@@ -2146,6 +2831,9 @@ class SidebandApp(MDApp):
             self.settings_screen.ids.settings_lxmf_ignore_unknown.active = self.sideband.config["lxmf_ignore_unknown"]
             self.settings_screen.ids.settings_lxmf_ignore_unknown.bind(active=save_lxmf_ignore_unknown)
 
+            self.settings_screen.ids.settings_ignore_invalid_stamps.active = self.sideband.config["lxmf_ignore_invalid_stamps"]
+            self.settings_screen.ids.settings_ignore_invalid_stamps.bind(active=save_lxmf_ignore_invalid_stamps)
+
             self.settings_screen.ids.settings_lxmf_periodic_sync.active = self.sideband.config["lxmf_periodic_sync"]
             self.settings_screen.ids.settings_lxmf_periodic_sync.bind(active=save_lxmf_periodic_sync)
             save_lxmf_periodic_sync(save=False)
@@ -2156,6 +2844,22 @@ class SidebandApp(MDApp):
             self.settings_screen.ids.settings_lxmf_sync_interval.bind(on_touch_up=sync_interval_change)
             self.settings_screen.ids.settings_lxmf_sync_interval.value = self.interval_to_slider_val(self.sideband.config["lxmf_sync_interval"])
             sync_interval_change(save=False)
+
+            self.settings_screen.ids.settings_lxmf_require_stamps.active = self.sideband.config["lxmf_require_stamps"]
+            self.settings_screen.ids.settings_lxmf_require_stamps.bind(active=save_lxmf_stamp_cost)
+            save_lxmf_stamp_cost(save=False)
+
+            def stamp_cost_change_cb(sender=None, event=None):
+                stamp_cost_change(sender=sender, event=event, save=False)
+            self.settings_screen.ids.settings_lxmf_require_stamps_cost.bind(value=stamp_cost_change_cb)
+            self.settings_screen.ids.settings_lxmf_require_stamps_cost.bind(on_touch_up=stamp_cost_change)
+            cost_val = self.sideband.config["lxmf_inbound_stamp_cost"]
+            if cost_val == None or cost_val < 1:
+                cost_val = 1
+            if cost_val > 32:
+                cost_val = 32
+            self.settings_screen.ids.settings_lxmf_require_stamps_cost.value = cost_val
+            stamp_cost_change(save=False)
 
             if self.sideband.config["lxmf_sync_limit"] == None or self.sideband.config["lxmf_sync_limit"] == False:
                 sync_limit = False
@@ -2195,7 +2899,7 @@ class SidebandApp(MDApp):
             elif input_lang == "korean":
                 self.settings_screen.ids.settings_lang_korean.active = True
                 self.settings_screen.ids.settings_display_name.font_name = "korean"
-            elif input_lang == "devangari":
+            elif input_lang == "combined":
                 self.settings_screen.ids.settings_lang_devangari.active = True
                 self.settings_screen.ids.settings_display_name.font_name = "combined"
             elif input_lang == "hebrew":
@@ -5026,22 +5730,22 @@ class SidebandApp(MDApp):
     def close_sub_map_action(self, sender=None):
         self.map_action(direction="right")
 
-    def object_details_action(self, sender=None, from_conv=False, from_telemetry=False, source_dest=None, direction="left"):
+    def object_details_action(self, sender=None, from_conv=False, from_objects=False, from_telemetry=False, source_dest=None, direction="left"):
         if self.root.ids.screen_manager.has_screen("object_details_screen"):
-            self.object_details_open(sender=sender, from_conv=from_conv, from_telemetry=from_telemetry, source_dest=source_dest, direction=direction)
+            self.object_details_open(sender=sender, from_conv=from_conv, from_objects=from_objects, from_telemetry=from_telemetry, source_dest=source_dest, direction=direction)
         else:
             self.loader_action(direction=direction)
             def final(dt):
                 self.object_details_init()
                 def o(dt):
-                    self.object_details_open(sender=sender, from_conv=from_conv, from_telemetry=from_telemetry, source_dest=source_dest, no_transition=True)
+                    self.object_details_open(sender=sender, from_conv=from_conv, from_objects=from_objects, from_telemetry=from_telemetry, source_dest=source_dest, no_transition=True)
                 Clock.schedule_once(o, ll_ot)
             Clock.schedule_once(final, ll_ft)
 
     def object_details_init(self):
         self.object_details_screen = ObjectDetails(self)
 
-    def object_details_open(self, sender=None, from_conv=False, from_telemetry=False, source_dest=None, direction="left", no_transition=False):
+    def object_details_open(self, sender=None, from_conv=False, from_objects=False, from_telemetry=False, source_dest=None, direction="left", no_transition=False):
         if no_transition:
             self.root.ids.screen_manager.transition = self.no_transition
         else:
@@ -5062,10 +5766,13 @@ class SidebandApp(MDApp):
         self.root.ids.nav_drawer.set_state("closed")
 
         if telemetry_source == None:
-            self.conversations_action(direction="right")
+            if self.include_objects and not self.include_conversations:
+                self.objects_action(direction="right")
+            else:
+                self.conversations_action(direction="right")
 
         else:
-            Clock.schedule_once(lambda dt: self.object_details_screen.set_source(telemetry_source, from_conv=from_conv, from_telemetry=from_telemetry), 0.0)
+            Clock.schedule_once(lambda dt: self.object_details_screen.set_source(telemetry_source, from_conv=from_conv, from_objects=from_objects, from_telemetry=from_telemetry), 0.0)
 
             def vj(dt):
                 self.root.ids.screen_manager.current = "object_details_screen"
@@ -5307,28 +6014,58 @@ The Propagation Nodes also distribute copies of messages between each other, suc
 If you use Reticulum and LXMF on hardware that does not carry any identifiers tied to you, it is possible to establish a completely free and anonymous communication system with Reticulum and LXMF clients."""
         
             guide_text8 = """
-[size=18dp][b]Keyboard Shortcuts[/b][/size][size=5dp]\n \n[/size] - Ctrl+Q or Ctrl-W Shut down Sideband
- - Ctrl-D or Ctrl-S Send message
- - Ctrl-R Show Conversations
- - Ctrl-L Show Announce Stream
- - Ctrl-M Show Situation Map
- - Ctrl-T Show Telemetry Setup
- - Ctrl-N New conversation
- - Ctrl-G Show guide"""
+[size=18dp][b]Keyboard Shortcuts[/b][/size][size=5dp]\n \n[/size]To ease navigation and operation of the program, Sideband has keyboard shortcuts mapped to the most common actions. A reference is included below.
+
+[b]Quick Actions[/b]
+ - [b]Ctrl-W[/b] Go back
+ - [b]Ctrl+Q[/b] Shut down Sideband
+ - [b]Ctrl-R[/b] Start LXMF sync (from Conversations screen)
+ - [b]Ctrl-N[/b] Create new conversation
+ 
+ [b]Message Actions[/b]
+ - [b]Ctrl-Shift-A[/b] add message attachment
+ - [b]Ctrl-Shift-V[/b] add high-quality voice
+ - [b]Ctrl-Shift-C[/b] add low-bandwidth voice
+ - [b]Ctrl-Shift-I[/b] add medium-quality image
+ - [b]Ctrl-Shift-F[/b] add file
+ - [b]Ctrl-D[/b] or [b]Ctrl-S[/b] Send message
+
+ [b]Voice Recording[/b]
+ - [b]Space[/b] Start/stop recording
+ - [b]Enter[/b] Save recording to message
+
+ [b]Navigation[/b]
+ - [b]Ctrl-[i]n[/i][/b] Go to conversation number [i]n[/i]
+ - [b]Ctrl-R[/b] Go to Conversations
+ - [b]Ctrl-O[/b] Go to Objects & Devices
+ - [b]Ctrl-L[/b] Go to Announce Stream
+ - [b]Ctrl-M[/b] Go to Situation Map
+ - [b]Ctrl-T[/b] Go to Telemetry configuration
+ - [b]Ctrl-G[/b] Go to Guide
+ - [b]Ctrl-U[/b] Display own telemetry
+
+[b]Map Controls[/b]
+ - [b]Up[/b], [b]down[/b], [b]left[/b], [b]right[/b] Navigate
+ - [b]W[/b], [b]A[/b], [b]S[/b], [b]D[/b] Navigate
+ - [b]H[/b], [b]J[/b], [b]L[/b], [b]K[/b] Navigate
+ - [b]E[/b] or [b]+[/b] Zoom in
+ - [b]Q[/b] or [b]-[/b] Zoom out
+ - Hold [b]Shift[/b] to navigate more coarsely
+ - Hold [b]Alt[/b] to navigate more finely"""
 
             guide_text9 = """
-[size=18dp][b]Sow Seeds Of Freedom[/b][/size][size=5dp]\n \n[/size]It took me more than seven years to design and built the entire ecosystem of software and hardware that makes this possible. If this project is valuable to you, please go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project with a donation. Every donation directly makes the entire Reticulum project possible.
+[size=18dp][b]Please Support This Project[/b][/size][size=5dp]\n \n[/size]It took me more than seven years to design and built the entire ecosystem of software and hardware that makes this possible. If this project is valuable to you, please go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project with a donation. Every donation directly makes the entire Reticulum project possible.
 
 Thank you very much for using Free Communications Systems.
 """
             info1 = guide_text1
-            info2 = guide_text2
-            info3 = guide_text3
-            info4 = guide_text4
-            info5 = guide_text5
-            info6 = guide_text6
-            info7 = guide_text7
-            info8 = guide_text8
+            info2 = guide_text8
+            info3 = guide_text2
+            info4 = guide_text3
+            info5 = guide_text4
+            info6 = guide_text5
+            info7 = guide_text6
+            info8 = guide_text7
             info9 = guide_text9
 
             if self.theme_cls.theme_style == "Dark":
@@ -5407,6 +6144,7 @@ class CustomOneLineIconListItem(OneLineIconListItem):
 
 class DialogItem(OneLineIconListItem):
     divider = None
+    icon = StringProperty()
 
 class MDMapIconButton(MDIconButton):
     pass
@@ -5436,6 +6174,7 @@ def run():
             is_daemon=True
         )
 
+        sideband.version_str = "v"+__version__+" "+__variant__
         sideband.start()
         while True:
             time.sleep(5)

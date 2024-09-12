@@ -2,7 +2,7 @@
 Module of MacOS API for plyer.notification.
 '''
 
-from plyer.facades import Notification
+from sbapp.plyer.facades import Notification
 
 from pyobjus import (
     autoclass, protocol, objc_str, ObjcBOOL
@@ -26,7 +26,7 @@ class OSXNotification(Notification):
     def _notify(self, **kwargs):
         title = kwargs.get('title', '')
         message = kwargs.get('message', '')
-        app_name = kwargs.get('app_name', '')
+        app_name = "Sideband"
         # app_icon, timeout, ticker are not supported (yet)
 
         notification = NSUserNotification.alloc().init()

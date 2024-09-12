@@ -47,6 +47,13 @@ def glob_paths(pattern):
 
     return out_files
 
+packages = setuptools.find_packages(
+    exclude=[
+        "sbapp.plyer.platforms.android",
+        "sbapp.kivymd.tools"
+        "sbapp.kivymd.tools.*"
+    ])
+
 package_data = {
 "": [
     "assets/*",
@@ -71,7 +78,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://unsigned.io/sideband",
-    packages=setuptools.find_packages(),
+    packages=packages,
     package_data=package_data,
     include_package_data=True,
     classifiers=[
@@ -88,9 +95,21 @@ setuptools.setup(
             'sideband=sbapp:main.run',
         ]
     },
-    install_requires=["rns>=0.7.5", "lxmf>=0.4.3", "kivy>=2.3.0", "plyer", "pillow>=10.2.0", "qrcode", "materialyoucolor>=2.0.7"],
-    extras_require={
-        "macos": ["pyobjus"],
-    },
+    install_requires=[
+        "rns>=0.7.7",
+        "lxmf>=0.5.1",
+        "kivy>=2.3.0",
+        "pillow>=10.2.0",
+        "qrcode",
+        "materialyoucolor>=2.0.7",
+        "ffpyplayer",
+        "sh",
+        "numpy<=1.26.4",
+        "pycodec2;platform_system!='Windows'",
+        "pyaudio;sys.platform=='linux'",
+        "pyobjus;sys.platform=='darwin'",
+        "pyogg;sys.platform=='darwin'",
+        "pyogg;platform_system=='Windows'",
+    ],
     python_requires='>=3.7',
 )

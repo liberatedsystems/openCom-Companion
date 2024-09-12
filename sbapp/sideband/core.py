@@ -1,7 +1,6 @@
 import RNS
 import LXMF
 import threading
-import plyer
 import os.path
 import time
 import struct
@@ -14,12 +13,14 @@ import RNS.Interfaces.Interface as Interface
 
 import multiprocessing.connection
 
+from copy import deepcopy
 from threading import Lock
 from .res import sideband_fb_data
 from .sense import Telemeter, Commands
 from .plugins import SidebandCommandPlugin, SidebandServicePlugin, SidebandTelemetryPlugin
 
 if RNS.vendor.platformutils.get_platform() == "android":
+    import plyer
     from jnius import autoclass, cast
     # Squelch excessive method signature logging
     import jnius.reflect
@@ -33,7 +34,8 @@ if RNS.vendor.platformutils.get_platform() == "android":
     jnius.reflect.log_method = mod
     jnius.reflect.log = redirect_log()
     ############################################
-    
+else:
+    import sbapp.plyer as plyer
 
 class PropagationNodeDetector():
     EMITTED_DELTA_GRACE = 300
@@ -104,13 +106,26 @@ class SidebandCore():
     def received_announce(self, destination_hash, announced_identity, app_data):
         # Add the announce to the directory announce
         # stream logger
+
+        # This reformats the new v0.5.0 announce data back to the expected format
+        # for Sidebands database and other handling functions.
+        dn = LXMF.display_name_from_app_data(app_data)
+        app_data = b""
+        if dn != None:
+            app_data = dn.encode("utf-8")
+
         self.log_announce(destination_hash, app_data, dest_type=SidebandCore.aspect_filter)
 
-    def __init__(self, owner_app, config_path = None, is_service=False, is_client=False, android_app_dir=None, verbose=False, owner_service=None, service_context=None, is_daemon=False):
+    def __init__(self, owner_app, config_path = None, is_service=False, is_client=False, android_app_dir=None, verbose=False, owner_service=None, service_context=None, is_daemon=False, load_config_only=False):
         self.is_service = is_service
         self.is_client = is_client
         self.is_daemon = is_daemon
+        self.msg_audio = None
+        self.last_msg_audio = None
+        self.ptt_playback_lock = threading.Lock()
+        self.ui_recording = False
         self.db = None
+        self.db_lock = threading.Lock()
 
         if not self.is_service and not self.is_client:
             self.is_standalone = True
@@ -132,12 +147,14 @@ class SidebandCore():
         self.telemetry_send_blocked_until = 0
         self.pending_telemetry_request = False
         self.telemetry_request_max_history = 7*24*60*60
+        self.default_lxm_limit = 128*1000
         self.state_db = {}
         self.state_lock = Lock()
         self.rpc_connection = None
         self.service_stopped = False
         self.service_context = service_context
         self.owner_service = owner_service
+        self.version_str = ""
 
         if config_path == None:
             self.app_dir     = plyer.storagepath.get_home_dir()+"/.config/sideband"
@@ -170,6 +187,10 @@ class SidebandCore():
         if not os.path.isdir(self.map_cache):
             os.makedirs(self.map_cache)
 
+        self.rec_cache         = self.cache_dir+"/rec"
+        if not os.path.isdir(self.rec_cache):
+            os.makedirs(self.rec_cache)
+
         self.icon              = self.asset_dir+"/icon.png"
         self.icon_48           = self.asset_dir+"/icon_48.png"
         self.icon_32           = self.asset_dir+"/icon_32.png"
@@ -195,7 +216,7 @@ class SidebandCore():
         self.last_lxmf_announce = 0
         self.last_if_change_announce = 0
         self.interface_local_adding = False
-        self.next_auto_announce = time.time() + 60*(random.random()*(SidebandCore.AUTO_ANNOUNCE_RANDOM_MAX-SidebandCore.AUTO_ANNOUNCE_RANDOM_MIN))
+        self.next_auto_announce = time.time() + 60*(random.random()*(SidebandCore.AUTO_ANNOUNCE_RANDOM_MAX-SidebandCore.AUTO_ANNOUNCE_RANDOM_MIN)+SidebandCore.AUTO_ANNOUNCE_RANDOM_MIN)
 
         try:
             if not os.path.isfile(self.config_path):
@@ -222,6 +243,9 @@ class SidebandCore():
                 
         except Exception as e:
             RNS.log("Error while configuring Sideband: "+str(e), RNS.LOG_ERROR)
+
+        if load_config_only:
+            return
 
         # Initialise Reticulum configuration
         if RNS.vendor.platformutils.get_platform() == "android":
@@ -265,6 +289,58 @@ class SidebandCore():
 
             threading.Thread(target=load_job, daemon=True).start()
 
+            if RNS.vendor.platformutils.is_linux():
+                try:
+                    if not self.is_daemon:
+                        lde_level = RNS.LOG_DEBUG
+                        RNS.log("Checking desktop integration...", lde_level)
+                        local_share_dir = os.path.expanduser("~/.local/share")
+                        app_entry_dir = os.path.expanduser("~/.local/share/applications")
+                        icon_dir = os.path.expanduser("~/.local/share/icons/hicolor/512x512/apps")
+                        de_filename = "io.unsigned.sideband.desktop"
+                        de_source = self.asset_dir+"/"+de_filename
+                        de_target = app_entry_dir+"/"+de_filename
+                        icn_source = self.asset_dir+"/icon.png"
+                        icn_target = icon_dir+"/io.unsigned.sideband.png"
+                        if os.path.isdir(local_share_dir):
+                            if not os.path.exists(app_entry_dir):
+                                os.makedirs(app_entry_dir)
+
+                            update_de = False
+                            if not os.path.exists(de_target):
+                                update_de = True
+                            else:
+                                included_de_version = ""
+                                with open(de_source, "rb") as sde_file:
+                                    included_de_version = sde_file.readline()
+                                existing_de_version = None
+                                with open(de_target, "rb") as de_file:
+                                    existing_de_version = de_file.readline()
+
+                                if included_de_version != existing_de_version:
+                                    update_de = True
+                                    RNS.log("Existing desktop entry doesn't match included, updating it", lde_level)
+                                else:
+                                    update_de = False
+                                    RNS.log("Existing desktop entry matches included, not updating it", lde_level)
+
+                            if update_de:
+                                RNS.log("Setting up desktop integration...", lde_level)
+                                import shutil
+                                RNS.log("Installing menu entry to \""+str(de_target)+"\"...", lde_level)
+                                shutil.copy(de_source, de_target)
+                                if not os.path.exists(icon_dir):
+                                    os.makedirs(icon_dir)
+                                RNS.log("Installing icon to \""+str(icn_target)+"\"...", lde_level)
+                                shutil.copy(icn_source, icn_target)
+                            else:
+                                RNS.log("Desktop integration is already set up", lde_level)
+
+                except Exception as e:
+                    RNS.log("An error occurred while setting up desktop integration: "+str(e), RNS.LOG_ERROR)
+                    RNS.trace_exception(e)
+
+
     def clear_tmp_dir(self):
         if os.path.isdir(self.tmp_dir):
             for file in os.listdir(self.tmp_dir):
@@ -302,6 +378,8 @@ class SidebandCore():
         self.config["lxmf_periodic_sync"] = False
         self.config["lxmf_ignore_unknown"] = False
         self.config["lxmf_sync_interval"] = 43200
+        self.config["lxmf_require_stamps"] = False
+        self.config["lxmf_inbound_stamp_cost"] = None
         self.config["last_lxmf_propagation_node"] = None
         self.config["nn_home_node"] = None
         self.config["print_command"] = "lp"
@@ -463,6 +541,12 @@ class SidebandCore():
             self.config["lxmf_sync_interval"] = 43200
         if not "lxmf_try_propagation_on_fail" in self.config:
             self.config["lxmf_try_propagation_on_fail"] = True
+        if not "lxmf_require_stamps" in self.config:
+            self.config["lxmf_require_stamps"] = False
+        if not "lxmf_ignore_invalid_stamps" in self.config:
+            self.config["lxmf_ignore_invalid_stamps"] = True
+        if not "lxmf_inbound_stamp_cost" in self.config:
+            self.config["lxmf_inbound_stamp_cost"] = None
         if not "notifications_on" in self.config:
             self.config["notifications_on"] = True
         if not "print_command" in self.config:
@@ -615,6 +699,8 @@ class SidebandCore():
             self.config["telemetry_send_appearance"] = False
         if not "telemetry_display_trusted_only" in self.config:
             self.config["telemetry_display_trusted_only"] = False
+        if not "display_style_from_all" in self.config:
+            self.config["display_style_from_all"] = False
         if not "telemetry_receive_trusted_only" in self.config:
             self.config["telemetry_receive_trusted_only"] = False
 
@@ -713,6 +799,7 @@ class SidebandCore():
             if unpacked_config != None and len(unpacked_config) != 0:
                 self.config = unpacked_config
                 self.update_active_lxmf_propagation_node()
+                self.update_ignore_invalid_stamps()
         except Exception as e:
             RNS.log("Error while reloading configuration: "+str(e), RNS.LOG_ERROR)
 
@@ -831,8 +918,14 @@ class SidebandCore():
 
     def notify(self, title, content, group=None, context_id=None):
         if not self.is_daemon:
+            if RNS.vendor.platformutils.is_linux():
+                from sbapp.ui.helpers import strip_emojis
+                title = strip_emojis(title)
+                content = strip_emojis(content)
+
+        
             if self.config["notifications_on"]:
-                if RNS.vendor.platformutils.get_platform() == "android":
+                if RNS.vendor.platformutils.is_android():
                     if self.getpersistent("permissions.notifications"):
                         notifications_permitted = True
                     else:
@@ -860,8 +953,8 @@ class SidebandCore():
         except Exception as e:
             RNS.log("Exception while decoding LXMF destination announce data:"+str(e))
 
-    def list_conversations(self):
-        result = self._db_conversations()
+    def list_conversations(self, conversations=True, objects=False):
+        result = self._db_conversations(conversations, objects)
         if result != None:
             return result
         else:
@@ -900,10 +993,52 @@ class SidebandCore():
             RNS.log("Error while checking trust for "+RNS.prettyhexrep(context_dest)+": "+str(e), RNS.LOG_ERROR)
             return False
 
-    def should_send_telemetry(self, context_dest):
+    def is_object(self, context_dest, conv_data = None):
+        try:
+            if conv_data == None:
+                existing_conv = self._db_conversation(context_dest)
+            else:
+                existing_conv = conv_data
+
+            if existing_conv != None:
+                data_dict = existing_conv["data"]
+                if data_dict != None:
+                    if "is_object" in data_dict:
+                        return data_dict["is_object"]
+
+            return False
+
+        except Exception as e:
+            RNS.log("Error while checking trust for "+RNS.prettyhexrep(context_dest)+": "+str(e), RNS.LOG_ERROR)
+            return False
+
+    def ptt_enabled(self, context_dest, conv_data = None):
+        try:
+            if conv_data == None:
+                existing_conv = self._db_conversation(context_dest)
+            else:
+                existing_conv = conv_data
+
+            if existing_conv != None:
+                data_dict = existing_conv["data"]
+                if data_dict != None:
+                    if "ptt_enabled" in data_dict:
+                        return data_dict["ptt_enabled"]
+
+            return False
+
+        except Exception as e:
+            RNS.log("Error while checking PTT-enabled for "+RNS.prettyhexrep(context_dest)+": "+str(e), RNS.LOG_ERROR)
+            return False
+
+    def should_send_telemetry(self, context_dest, conv_data=None):
         try:
             if self.config["telemetry_enabled"]:
-                existing_conv = self._db_conversation(context_dest)
+                if conv_data == None:
+                    existing_conv = self._db_conversation(context_dest)
+                else:
+                    existing_conv = conv_data
+
                 if existing_conv != None:
                     cd = existing_conv["data"]
                     if cd != None and "telemetry" in cd and cd["telemetry"] == True:
@@ -938,9 +1073,13 @@ class SidebandCore():
             RNS.log("Error while checking request permissions for "+RNS.prettyhexrep(context_dest)+": "+str(e), RNS.LOG_ERROR)
             return False
 
-    def requests_allowed_from(self, context_dest):
+    def requests_allowed_from(self, context_dest, conv_data=None):
         try:
-            existing_conv = self._db_conversation(context_dest)
+            if conv_data == None:
+                existing_conv = self._db_conversation(context_dest)
+            else:
+                existing_conv = conv_data
+
             if existing_conv != None:
                 cd = existing_conv["data"]
                 if cd != None and "allow_requests" in cd and cd["allow_requests"] == True:
@@ -994,15 +1133,15 @@ class SidebandCore():
                     app_data = RNS.Identity.recall_app_data(context_dest)
                     if app_data != None:
                         if existing_conv["trust"] == 1:
-                            return app_data.decode("utf-8")
+                            return LXMF.display_name_from_app_data(app_data)
                         else:
-                            return app_data.decode("utf-8")+" "+RNS.prettyhexrep(context_dest)
+                            return LXMF.display_name_from_app_data(app_data)+" "+RNS.prettyhexrep(context_dest)
                     else:
                         return RNS.prettyhexrep(context_dest)
             else:
                 app_data = RNS.Identity.recall_app_data(context_dest)
                 if app_data != None:
-                    return app_data.decode("utf-8")+" "+RNS.prettyhexrep(context_dest)
+                    return LXMF.display_name_from_app_data(app_data)+" "+RNS.prettyhexrep(context_dest)
                 else:
                     return RNS.prettyhexrep(context_dest)
 
@@ -1042,6 +1181,12 @@ class SidebandCore():
 
     def untrusted_conversation(self, context_dest):
         self._db_conversation_set_trusted(context_dest, False)
+
+    def conversation_set_object(self, context_dest, is_object):
+        self._db_conversation_set_object(context_dest, is_object)
+
+    def conversation_set_ptt_enabled(self, context_dest, ptt_enabled):
+        self._db_conversation_set_ptt_enabled(context_dest, ptt_enabled)
 
     def send_telemetry_in_conversation(self, context_dest):
         self._db_conversation_set_telemetry(context_dest, True)
@@ -1138,7 +1283,7 @@ class SidebandCore():
                         {Commands.TELEMETRY_REQUEST: request_timebase},
                     ]}
 
-                    lxm = LXMF.LXMessage(dest, source, "", desired_method=desired_method, fields = lxm_fields)
+                    lxm = LXMF.LXMessage(dest, source, "", desired_method=desired_method, fields = lxm_fields, include_ticket=True)
                     lxm.request_timebase = request_timebase
                     lxm.register_delivery_callback(self.telemetry_request_finished)
                     lxm.register_failed_callback(self.telemetry_request_finished)
@@ -1205,7 +1350,7 @@ class SidebandCore():
                                 telemetry_timebase = max(telemetry_timebase, ts)
 
                         if telemetry_timebase > (self.getpersistent(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.last_send_success_timebase") or 0):
-                            lxm = LXMF.LXMessage(dest, source, "", desired_method=desired_method, fields = lxm_fields)
+                            lxm = LXMF.LXMessage(dest, source, "", desired_method=desired_method, fields = lxm_fields, include_ticket=self.is_trusted(to_addr))
                             lxm.telemetry_timebase = telemetry_timebase
                             lxm.register_delivery_callback(self.outbound_telemetry_finished)
                             lxm.register_failed_callback(self.outbound_telemetry_finished)
@@ -1395,11 +1540,27 @@ class SidebandCore():
                     RNS.log("Error while setting log level over RPC: "+str(e), RNS.LOG_DEBUG)
                     return False
 
+    def service_rpc_set_ui_recording(self, recording):
+        if not RNS.vendor.platformutils.is_android():
+            pass
+        else:
+            if self.is_service:
+                self.ui_recording = recording
+                return True
+            else:
+                try:
+                    if self.rpc_connection == None:
+                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
+                    self.rpc_connection.send({"set_ui_recording": recording})
+                    response = self.rpc_connection.recv()
+                    return response
+                except Exception as e:
+                    RNS.log("Error while setting UI recording status over RPC: "+str(e), RNS.LOG_DEBUG)
+                    return False
+
     def getstate(self, prop, allow_cache=False):
         with self.state_lock:
             if not self.service_stopped:
-                # TODO: remove
-                # us = time.time()
 
                 if not RNS.vendor.platformutils.is_android():
                     if prop in self.state_db:
@@ -1418,8 +1579,6 @@ class SidebandCore():
                                 self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
                             self.rpc_connection.send({"getstate": prop})
                             response = self.rpc_connection.recv()
-                            # TODO: Remove
-                            # RNS.log("RPC getstate result for "+str(prop)+"="+str(response)+" in "+RNS.prettytime(time.time()-us), RNS.LOG_WARNING)
                             return response
 
                         except Exception as e:
@@ -1503,6 +1662,9 @@ class SidebandCore():
                                 elif "set_debug" in call:
                                     self.service_rpc_set_debug(call["set_debug"])
                                     connection.send(True)
+                                elif "set_ui_recording" in call:
+                                    self.service_rpc_set_ui_recording(call["set_ui_recording"])
+                                    connection.send(True)
                                 elif "get_plugins_info" in call:
                                     connection.send(self._get_plugins_info())
                                 else:
@@ -1540,9 +1702,19 @@ class SidebandCore():
 
     def __db_connect(self):
         if self.db == None:
-            self.db = sqlite3.connect(self.db_path, check_same_thread=False)
+            self.db = sqlite3.connect(self.db_path, check_same_thread=False, timeout=15.0)
 
         return self.db
+
+    def __db_reconnect(self):
+        if self.db != None:
+            try:
+                self.db.close()
+            except Exception as e:
+                RNS.log("Error while closing database for reconnect. The contained exception was:", RNS.LOG_ERROR)
+                RNS.trace_exception(e)
+        self.db = None
+        return self.__db_connect()
 
     def __db_init(self):
         db = self.__db_connect()
@@ -1602,67 +1774,6 @@ class SidebandCore():
         # db.commit()
         self.setstate("database_ready", True)
 
-    # def _db_getstate(self, prop):
-    #     try:
-    #         db = self.__db_connect()
-    #         dbc = db.cursor()
-
-    #         query = "select * from state where property=:uprop"
-    #         dbc.execute(query, {"uprop": prop.encode("utf-8")})
-            
-    #         result = dbc.fetchall()
-
-    #         if len(result) < 1:
-    #             return None
-    #         else:
-    #             try:
-    #                 entry = result[0]
-    #                 val = msgpack.unpackb(entry[1])
-                    
-    #                 return val
-    #             except Exception as e:
-    #                 RNS.log("Could not unpack state value from database for property \""+str(prop)+"\". The contained exception was: "+str(e), RNS.LOG_ERROR)
-    #                 return None
-
-    #     except Exception as e:
-    #         RNS.log("An error occurred during getstate database operation: "+str(e), RNS.LOG_ERROR)
-    #         self.db = None
-
-    # def _db_setstate(self, prop, val):
-    #     try:
-    #         uprop = prop.encode("utf-8")
-    #         bval = msgpack.packb(val)
-
-    #         if self._db_getstate(prop) == None:
-    #             try:
-    #                 db = self.__db_connect()
-    #                 dbc = db.cursor()
-    #                 query = "INSERT INTO state (property, value) values (?, ?)"
-    #                 data = (uprop, bval)
-    #                 dbc.execute(query, data)
-    #                 db.commit()
-
-    #             except Exception as e:
-    #                 RNS.log("Error while setting state property "+str(prop)+" in DB: "+str(e), RNS.LOG_ERROR)
-    #                 RNS.log("Retrying as update query...", RNS.LOG_ERROR)
-    #                 db = self.__db_connect()
-    #                 dbc = db.cursor()
-    #                 query = "UPDATE state set value=:bval where property=:uprop;"
-    #                 dbc.execute(query, {"bval": bval, "uprop": uprop})
-    #                 db.commit()
-
-    #         else:
-    #             db = self.__db_connect()
-    #             dbc = db.cursor()
-    #             query = "UPDATE state set value=:bval where property=:uprop;"
-    #             dbc.execute(query, {"bval": bval, "uprop": uprop})
-    #             db.commit()
-
-
-    #     except Exception as e:
-    #         RNS.log("An error occurred during setstate database operation: "+str(e), RNS.LOG_ERROR)
-    #         self.db = None
-
     def _db_initpersistent(self):
         db = self.__db_connect()
         dbc = db.cursor()
@@ -1671,223 +1782,255 @@ class SidebandCore():
         db.commit()
 
     def _db_getpersistent(self, prop):
-        try:
+        with self.db_lock:
+            try:
+                db = self.__db_connect()
+                dbc = db.cursor()
+                
+                query = "select * from persistent where property=:uprop"
+                dbc.execute(query, {"uprop": prop.encode("utf-8")})
+                result = dbc.fetchall()
+
+                if len(result) < 1:
+                    return None
+                else:
+                    try:
+                        entry = result[0]
+                        val = msgpack.unpackb(entry[1])
+                        if val == None:
+                            query = "delete from persistent where (property=:uprop);"
+                            dbc.execute(query, {"uprop": prop.encode("utf-8")})
+                            db.commit()
+
+                        return val
+                    except Exception as e:
+                        RNS.log("Could not unpack persistent value from database for property \""+str(prop)+"\". The contained exception was: "+str(e), RNS.LOG_ERROR)
+                        return None
+            
+            except Exception as e:
+                RNS.log("An error occurred during persistent getstate database operation: "+str(e), RNS.LOG_ERROR)
+                self.db = None
+
+    def _db_setpersistent(self, prop, val):
+        existing_prop = self._db_getpersistent(prop)
+
+        with self.db_lock:
+            try:
+                db = self.__db_connect()
+                dbc = db.cursor()
+                uprop = prop.encode("utf-8")
+                bval = msgpack.packb(val)
+
+                if existing_prop == None:
+                    try:
+                        query = "INSERT INTO persistent (property, value) values (?, ?)"
+                        data = (uprop, bval)
+                        dbc.execute(query, data)
+                        db.commit()
+            
+                    except Exception as e:
+                        RNS.log("Error while setting persistent state property "+str(prop)+" in DB: "+str(e), RNS.LOG_ERROR)
+                        RNS.log("Retrying as update query...")
+                        query = "UPDATE state set value=:bval where property=:uprop;"
+                        dbc.execute(query, {"bval": bval, "uprop": uprop})
+                        db.commit()
+
+                else:
+                    query = "UPDATE persistent set value=:bval where property=:uprop;"
+                    dbc.execute(query, {"bval": bval, "uprop": uprop})
+                    db.commit()
+            
+            except Exception as e:
+                RNS.log("An error occurred during persistent setstate database operation: "+str(e), RNS.LOG_ERROR)
+                self.db = None
+
+    def _db_conversation_update_txtime(self, context_dest, is_retry = False):
+        with self.db_lock:
+            try:
+                db = self.__db_connect()
+                dbc = db.cursor()
+
+                query = "UPDATE conv set last_tx = ? where dest_context = ?"
+                data = (time.time(), context_dest)
+
+                dbc.execute(query, data)
+                result = dbc.fetchall()
+                db.commit()
+            except Exception as e:
+                RNS.log("An error occurred while updating conversation TX time: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                # if not is_retry:
+                #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                #     self._db_conversation_update_txtime(context_dest, is_retry=True)
+
+    def _db_conversation_set_unread(self, context_dest, unread, tx = False, is_retry = False):
+        with self.db_lock:
+            try:
+                db = self.__db_connect()
+                dbc = db.cursor()
+                
+                if unread:
+                    if tx:
+                        query = "UPDATE conv set unread = ?, last_tx = ? where dest_context = ?"
+                        data = (unread, time.time(), context_dest)
+                    else:
+                        query = "UPDATE conv set unread = ?, last_rx = ? where dest_context = ?"
+                        data = (unread, time.time(), context_dest)
+                else:
+                    query = "UPDATE conv set unread = ? where dest_context = ?"
+                    data = (unread, context_dest)
+
+                dbc.execute(query, data)
+                result = dbc.fetchall()
+                db.commit()
+            except Exception as e:
+                RNS.log("An error occurred while updating conversation unread flag: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                # if not is_retry:
+                #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                #     self._db_conversation_set_unread(context_dest, unread, tx, is_retry=True)
+
+    def _db_telemetry(self, context_dest = None, after = None, before = None, limit = None):
+        with self.db_lock:
             db = self.__db_connect()
             dbc = db.cursor()
-            
-            query = "select * from persistent where property=:uprop"
-            dbc.execute(query, {"uprop": prop.encode("utf-8")})
+
+            limit_part = ""
+            if limit:
+                limit_part = " LIMIT "+str(int(limit))
+            order_part = " order by ts DESC"+limit_part
+            if context_dest == None:
+                if after != None and before == None:
+                    query = "select * from telemetry where ts>:after_ts"+order_part
+                    dbc.execute(query, {"after_ts": after})
+                elif after == None and before != None:
+                    query = "select * from telemetry where ts<:before_ts"+order_part
+                    dbc.execute(query, {"before_ts": before})
+                elif after != None and before != None:
+                    query = "select * from telemetry where ts<:before_ts and ts>:after_ts"+order_part
+                    dbc.execute(query, {"before_ts": before, "after_ts": after})
+                else:
+                    query = query = "select * from telemetry"
+                    dbc.execute(query, {})
+
+            else:        
+                if after != None and before == None:
+                    query = "select * from telemetry where dest_context=:context_dest and ts>:after_ts"+order_part
+                    dbc.execute(query, {"context_dest": context_dest, "after_ts": after})
+                elif after == None and before != None:
+                    query = "select * from telemetry where dest_context=:context_dest and ts<:before_ts"+order_part
+                    dbc.execute(query, {"context_dest": context_dest, "before_ts": before})
+                elif after != None and before != None:
+                    query = "select * from telemetry where dest_context=:context_dest and ts<:before_ts and ts>:after_ts"+order_part
+                    dbc.execute(query, {"context_dest": context_dest, "before_ts": before, "after_ts": after})
+                else:
+                    query = query = "select * from telemetry where dest_context=:context_dest"+order_part
+                    dbc.execute(query, {"context_dest": context_dest})
+
             result = dbc.fetchall()
 
             if len(result) < 1:
                 return None
             else:
-                try:
-                    entry = result[0]
-                    val = msgpack.unpackb(entry[1])
-                    if val == None:
-                        query = "delete from persistent where (property=:uprop);"
-                        dbc.execute(query, {"uprop": prop.encode("utf-8")})
-                        db.commit()
+                results = {}
+                for entry in result:
+                    telemetry_source = entry[1]
+                    telemetry_timestamp = entry[2]
+                    telemetry_data = entry[3]
+                    
+                    if not telemetry_source in results:
+                        results[telemetry_source] = []
 
-                    return val
-                except Exception as e:
-                    RNS.log("Could not unpack persistent value from database for property \""+str(prop)+"\". The contained exception was: "+str(e), RNS.LOG_ERROR)
+                    results[telemetry_source].append([telemetry_timestamp, telemetry_data])
+                
+                return results
+
+    def _db_save_telemetry(self, context_dest, telemetry, physical_link = None, source_dest = None, via = None, is_retry = False):
+        with self.db_lock:
+            try:
+                remote_telemeter = Telemeter.from_packed(telemetry)
+                read_telemetry = remote_telemeter.read_all()
+                telemetry_timestamp = read_telemetry["time"]["utc"]
+
+                db = self.__db_connect()
+                dbc = db.cursor()
+
+                query = "select * from telemetry where dest_context=:ctx and ts=:tts"
+                dbc.execute(query, {"ctx": context_dest, "tts": telemetry_timestamp})
+                result = dbc.fetchall()
+
+                if len(result) != 0:
+                    RNS.log("Telemetry entry with source "+RNS.prettyhexrep(context_dest)+" and timestamp "+str(telemetry_timestamp)+" already exists, skipping save", RNS.LOG_DEBUG)
                     return None
-        
-        except Exception as e:
-            RNS.log("An error occurred during persistent getstate database operation: "+str(e), RNS.LOG_ERROR)
-            self.db = None
 
-    def _db_setpersistent(self, prop, val):
-        try:
-            db = self.__db_connect()
-            dbc = db.cursor()
-            uprop = prop.encode("utf-8")
-            bval = msgpack.packb(val)
+                if physical_link != None and len(physical_link) != 0:
+                    remote_telemeter.synthesize("physical_link")
+                    if "rssi" in physical_link: remote_telemeter.sensors["physical_link"].rssi = physical_link["rssi"]
+                    if "snr" in physical_link: remote_telemeter.sensors["physical_link"].snr = physical_link["snr"]
+                    if "q" in physical_link: remote_telemeter.sensors["physical_link"].q = physical_link["q"]
+                    remote_telemeter.sensors["physical_link"].update_data()
+                    telemetry = remote_telemeter.packed()
 
-            if self._db_getpersistent(prop) == None:
-                try:
-                    query = "INSERT INTO persistent (property, value) values (?, ?)"
-                    data = (uprop, bval)
-                    dbc.execute(query, data)
-                    db.commit()
-        
-                except Exception as e:
-                    RNS.log("Error while setting persistent state property "+str(prop)+" in DB: "+str(e), RNS.LOG_ERROR)
-                    RNS.log("Retrying as update query...")
-                    query = "UPDATE state set value=:bval where property=:uprop;"
-                    dbc.execute(query, {"bval": bval, "uprop": uprop})
-                    db.commit()
-
-            else:
-                query = "UPDATE persistent set value=:bval where property=:uprop;"
-                dbc.execute(query, {"bval": bval, "uprop": uprop})
-                db.commit()
-        
-        except Exception as e:
-            RNS.log("An error occurred during persistent setstate database operation: "+str(e), RNS.LOG_ERROR)
-            self.db = None
-
-    def _db_conversation_update_txtime(self, context_dest):
-        db = self.__db_connect()
-        dbc = db.cursor()
-
-        query = "UPDATE conv set last_tx = ? where dest_context = ?"
-        data = (time.time(), context_dest)
-
-        dbc.execute(query, data)
-        result = dbc.fetchall()
-        db.commit()
-
-    def _db_conversation_set_unread(self, context_dest, unread, tx = False):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        if unread:
-            if tx:
-                query = "UPDATE conv set unread = ?, last_tx = ? where dest_context = ?"
-                data = (unread, time.time(), context_dest)
-            else:
-                query = "UPDATE conv set unread = ?, last_rx = ? where dest_context = ?"
-                data = (unread, time.time(), context_dest)
-        else:
-            query = "UPDATE conv set unread = ? where dest_context = ?"
-            data = (unread, context_dest)
-
-        dbc.execute(query, data)
-        result = dbc.fetchall()
-        db.commit()
-
-    def _db_telemetry(self, context_dest = None, after = None, before = None, limit = None):
-        db = self.__db_connect()
-        dbc = db.cursor()
-
-        limit_part = ""
-        if limit:
-            limit_part = " LIMIT "+str(int(limit))
-        order_part = " order by ts DESC"+limit_part
-        if context_dest == None:
-            if after != None and before == None:
-                query = "select * from telemetry where ts>:after_ts"+order_part
-                dbc.execute(query, {"after_ts": after})
-            elif after == None and before != None:
-                query = "select * from telemetry where ts<:before_ts"+order_part
-                dbc.execute(query, {"before_ts": before})
-            elif after != None and before != None:
-                query = "select * from telemetry where ts<:before_ts and ts>:after_ts"+order_part
-                dbc.execute(query, {"before_ts": before, "after_ts": after})
-            else:
-                query = query = "select * from telemetry"
-                dbc.execute(query, {})
-
-        else:        
-            if after != None and before == None:
-                query = "select * from telemetry where dest_context=:context_dest and ts>:after_ts"+order_part
-                dbc.execute(query, {"context_dest": context_dest, "after_ts": after})
-            elif after == None and before != None:
-                query = "select * from telemetry where dest_context=:context_dest and ts<:before_ts"+order_part
-                dbc.execute(query, {"context_dest": context_dest, "before_ts": before})
-            elif after != None and before != None:
-                query = "select * from telemetry where dest_context=:context_dest and ts<:before_ts and ts>:after_ts"+order_part
-                dbc.execute(query, {"context_dest": context_dest, "before_ts": before, "after_ts": after})
-            else:
-                query = query = "select * from telemetry where dest_context=:context_dest"+order_part
-                dbc.execute(query, {"context_dest": context_dest})
-
-        result = dbc.fetchall()
-
-        if len(result) < 1:
-            return None
-        else:
-            results = {}
-            for entry in result:
-                telemetry_source = entry[1]
-                telemetry_timestamp = entry[2]
-                telemetry_data = entry[3]
-                
-                if not telemetry_source in results:
-                    results[telemetry_source] = []
-
-                results[telemetry_source].append([telemetry_timestamp, telemetry_data])
-            
-            return results
-
-    def _db_save_telemetry(self, context_dest, telemetry, physical_link = None, source_dest = None, via = None):
-        try:
-            remote_telemeter = Telemeter.from_packed(telemetry)
-            read_telemetry = remote_telemeter.read_all()
-            telemetry_timestamp = read_telemetry["time"]["utc"]
-
-            db = self.__db_connect()
-            dbc = db.cursor()
-
-            query = "select * from telemetry where dest_context=:ctx and ts=:tts"
-            dbc.execute(query, {"ctx": context_dest, "tts": telemetry_timestamp})
-            result = dbc.fetchall()
-
-            if len(result) != 0:
-                RNS.log("Telemetry entry with source "+RNS.prettyhexrep(context_dest)+" and timestamp "+str(telemetry_timestamp)+" already exists, skipping save", RNS.LOG_DEBUG)
-                return None
-
-            if physical_link != None and len(physical_link) != 0:
-                remote_telemeter.synthesize("physical_link")
-                if "rssi" in physical_link: remote_telemeter.sensors["physical_link"].rssi = physical_link["rssi"]
-                if "snr" in physical_link: remote_telemeter.sensors["physical_link"].snr = physical_link["snr"]
-                if "q" in physical_link: remote_telemeter.sensors["physical_link"].q = physical_link["q"]
-                remote_telemeter.sensors["physical_link"].update_data()
-                telemetry = remote_telemeter.packed()
-
-            if source_dest != None:
-                remote_telemeter.synthesize("received")
-                remote_telemeter.sensors["received"].by = self.lxmf_destination.hash
-                remote_telemeter.sensors["received"].via = source_dest
-
-                rl = remote_telemeter.read("location")
-                if rl and "latitude" in rl and "longitude" in rl and "altitude" in rl:
-                    if self.latest_telemetry != None and "location" in self.latest_telemetry:
-                        ol = self.latest_telemetry["location"]
-                        if ol != None:
-                            if "latitude" in ol and "longitude" in ol and "altitude" in ol:
-                                olat = ol["latitude"]; olon = ol["longitude"]; oalt = ol["altitude"]
-                                rlat = rl["latitude"]; rlon = rl["longitude"]; ralt = rl["altitude"]
-                                if olat != None and olon != None and oalt != None:
-                                    if rlat != None and rlon != None and ralt != None:
-                                        remote_telemeter.sensors["received"].set_distance(
-                                            (olat, olon, oalt), (rlat, rlon, ralt)
-                                        )
-
-                remote_telemeter.sensors["received"].update_data()
-                telemetry = remote_telemeter.packed()
-
-            if via != None:
-                if not "received" in remote_telemeter.sensors:
+                if source_dest != None:
                     remote_telemeter.synthesize("received")
+                    remote_telemeter.sensors["received"].by = self.lxmf_destination.hash
+                    remote_telemeter.sensors["received"].via = source_dest
 
-                if "by" in remote_telemeter.sensors["received"].data:
-                    remote_telemeter.sensors["received"].by = remote_telemeter.sensors["received"].data["by"]
-                if "distance" in remote_telemeter.sensors["received"].data:
-                    remote_telemeter.sensors["received"].geodesic_distance = remote_telemeter.sensors["received"].data["distance"]["geodesic"]
-                    remote_telemeter.sensors["received"].euclidian_distance = remote_telemeter.sensors["received"].data["distance"]["euclidian"]
+                    rl = remote_telemeter.read("location")
+                    if rl and "latitude" in rl and "longitude" in rl and "altitude" in rl:
+                        if self.latest_telemetry != None and "location" in self.latest_telemetry:
+                            ol = self.latest_telemetry["location"]
+                            if ol != None:
+                                if "latitude" in ol and "longitude" in ol and "altitude" in ol:
+                                    olat = ol["latitude"]; olon = ol["longitude"]; oalt = ol["altitude"]
+                                    rlat = rl["latitude"]; rlon = rl["longitude"]; ralt = rl["altitude"]
+                                    if olat != None and olon != None and oalt != None:
+                                        if rlat != None and rlon != None and ralt != None:
+                                            remote_telemeter.sensors["received"].set_distance(
+                                                (olat, olon, oalt), (rlat, rlon, ralt)
+                                            )
 
-                remote_telemeter.sensors["received"].via = via
-                remote_telemeter.sensors["received"].update_data()
-                telemetry = remote_telemeter.packed()
-                
-            query = "INSERT INTO telemetry (dest_context, ts, data) values (?, ?, ?)"
-            data = (context_dest, telemetry_timestamp, telemetry)
-            dbc.execute(query, data)
-            db.commit()
-            self.setstate("app.flags.last_telemetry", time.time())
+                    remote_telemeter.sensors["received"].update_data()
+                    telemetry = remote_telemeter.packed()
 
-            return telemetry
+                if via != None:
+                    if not "received" in remote_telemeter.sensors:
+                        remote_telemeter.synthesize("received")
 
-        except Exception as e:
-            import traceback
-            exception_info = "".join(traceback.TracebackException.from_exception(e).format())
-            RNS.log(f"A {str(type(e))} occurred while saving telemetry to database: {str(e)}", RNS.LOG_ERROR)
-            RNS.log(exception_info, RNS.LOG_ERROR)
-            self.db = None
+                    if "by" in remote_telemeter.sensors["received"].data:
+                        remote_telemeter.sensors["received"].by = remote_telemeter.sensors["received"].data["by"]
+                    if "distance" in remote_telemeter.sensors["received"].data:
+                        remote_telemeter.sensors["received"].geodesic_distance = remote_telemeter.sensors["received"].data["distance"]["geodesic"]
+                        remote_telemeter.sensors["received"].euclidian_distance = remote_telemeter.sensors["received"].data["distance"]["euclidian"]
+
+                    remote_telemeter.sensors["received"].via = via
+                    remote_telemeter.sensors["received"].update_data()
+                    telemetry = remote_telemeter.packed()
+                    
+                query = "INSERT INTO telemetry (dest_context, ts, data) values (?, ?, ?)"
+                data = (context_dest, telemetry_timestamp, telemetry)
+                dbc.execute(query, data)
+
+                try:
+                    db.commit()
+                except Exception as e:
+                    RNS.log("An error occurred while commiting telemetry to database: "+str(e), RNS.LOG_ERROR)
+                    self.__db_reconnect()
+                    # if not is_retry:
+                    #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                    #     self._db_save_telemetry(context_dest, telemetry, physical_link, source_dest, via, is_retry = True)
+                    return
+
+                self.setstate("app.flags.last_telemetry", time.time())
+
+                return telemetry
+
+            except Exception as e:
+                import traceback
+                exception_info = "".join(traceback.TracebackException.from_exception(e).format())
+                RNS.log(f"A {str(type(e))} occurred while saving telemetry to database: {str(e)}", RNS.LOG_ERROR)
+                RNS.log(exception_info, RNS.LOG_ERROR)
+                self.db = None
 
     def _db_update_appearance(self, context_dest, timestamp, appearance, from_bulk_telemetry=False):
         conv = self._db_conversation(context_dest)
@@ -1899,29 +2042,30 @@ class SidebandCore():
             self.setpersistent("temp.peer_appearance."+RNS.hexrep(context_dest, delimit=False), ae)
         
         else:
-            data_dict = conv["data"]
-            if data_dict == None:
-                data_dict = {}
+            with self.db_lock:
+                data_dict = conv["data"]
+                if data_dict == None:
+                    data_dict = {}
 
-            if not "appearance" in data_dict:
-                data_dict["appearance"] = None
+                if not "appearance" in data_dict:
+                    data_dict["appearance"] = None
 
-            if from_bulk_telemetry and data_dict["appearance"] != SidebandCore.DEFAULT_APPEARANCE:
-                RNS.log("Aborting appearance update from bulk transfer, since conversation already has appearance set: "+str(appearance)+" / "+str(data_dict["appearance"]), RNS.LOG_DEBUG)
-                return
+                if from_bulk_telemetry and data_dict["appearance"] != SidebandCore.DEFAULT_APPEARANCE:
+                    RNS.log("Aborting appearance update from bulk transfer, since conversation already has appearance set: "+str(appearance)+" / "+str(data_dict["appearance"]), RNS.LOG_DEBUG)
+                    return
 
-            if data_dict["appearance"] != appearance:
-                data_dict["appearance"] = appearance
-                packed_dict = msgpack.packb(data_dict)
-            
-                db = self.__db_connect()
-                dbc = db.cursor()
-            
-                query = "UPDATE conv set data = ? where dest_context = ?"
-                data = (packed_dict, context_dest)
-                dbc.execute(query, data)
-                result = dbc.fetchall()
-                db.commit()
+                if data_dict["appearance"] != appearance:
+                    data_dict["appearance"] = appearance
+                    packed_dict = msgpack.packb(data_dict)
+                
+                    db = self.__db_connect()
+                    dbc = db.cursor()
+                
+                    query = "UPDATE conv set data = ? where dest_context = ?"
+                    data = (packed_dict, context_dest)
+                    dbc.execute(query, data)
+                    result = dbc.fetchall()
+                    db.commit()
 
     def _db_get_appearance(self, context_dest, conv = None, raw=False):
         if context_dest == self.lxmf_destination.hash:
@@ -1969,7 +2113,7 @@ class SidebandCore():
         return None
 
 
-    def _db_conversation_set_telemetry(self, context_dest, send_telemetry=False):
+    def _db_conversation_set_telemetry(self, context_dest, send_telemetry=False, is_retry = False):
         conv = self._db_conversation(context_dest)
         data_dict = conv["data"]
         if data_dict == None:
@@ -1978,16 +2122,25 @@ class SidebandCore():
         data_dict["telemetry"] = send_telemetry
         packed_dict = msgpack.packb(data_dict)
         
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        query = "UPDATE conv set data = ? where dest_context = ?"
-        data = (packed_dict, context_dest)
-        dbc.execute(query, data)
-        result = dbc.fetchall()
-        db.commit()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "UPDATE conv set data = ? where dest_context = ?"
+            data = (packed_dict, context_dest)
+            dbc.execute(query, data)
+            result = dbc.fetchall()
 
-    def _db_conversation_set_requests(self, context_dest, allow_requests=False):
+            try:
+                db.commit()
+            except Exception as e:
+                RNS.log("An error occurred while updating conversation telemetry options: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                # if not is_retry:
+                #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                #     self._db_conversation_set_telemetry(context_dest, send_telemetry, is_retry=True)
+
+    def _db_conversation_set_requests(self, context_dest, allow_requests=False, is_retry=False):
         conv = self._db_conversation(context_dest)
         data_dict = conv["data"]
         if data_dict == None:
@@ -1996,171 +2149,270 @@ class SidebandCore():
         data_dict["allow_requests"] = allow_requests
         packed_dict = msgpack.packb(data_dict)
         
-        db = self.__db_connect()
-        dbc = db.cursor()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "UPDATE conv set data = ? where dest_context = ?"
+            data = (packed_dict, context_dest)
+            dbc.execute(query, data)
+            result = dbc.fetchall()
+
+            try:
+                db.commit()
+            except Exception as e:
+                RNS.log("An error occurred while updating conversation request options: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                if not is_retry:
+                    RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                    self._db_conversation_set_requests(context_dest, allow_requests, is_retry=True)
+
+    def _db_conversation_set_object(self, context_dest, is_object=False):
+        conv = self._db_conversation(context_dest)
+        data_dict = conv["data"]
+        if data_dict == None:
+            data_dict = {}
+
+        data_dict["is_object"] = is_object
+        packed_dict = msgpack.packb(data_dict)
         
-        query = "UPDATE conv set data = ? where dest_context = ?"
-        data = (packed_dict, context_dest)
-        dbc.execute(query, data)
-        result = dbc.fetchall()
-        db.commit()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "UPDATE conv set data = ? where dest_context = ?"
+            data = (packed_dict, context_dest)
+            dbc.execute(query, data)
+            result = dbc.fetchall()
+
+            try:
+                db.commit()
+            except Exception as e:
+                RNS.log("An error occurred while updating conversation object option: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                # if not is_retry:
+                #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                #     self._db_conversation_set_object(context_dest, is_object, is_retry=True)
+
+    def _db_conversation_set_ptt_enabled(self, context_dest, ptt_enabled=False):
+        conv = self._db_conversation(context_dest)
+        data_dict = conv["data"]
+        if data_dict == None:
+            data_dict = {}
+
+        data_dict["ptt_enabled"] = ptt_enabled
+        packed_dict = msgpack.packb(data_dict)
+        
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "UPDATE conv set data = ? where dest_context = ?"
+            data = (packed_dict, context_dest)
+            dbc.execute(query, data)
+            result = dbc.fetchall()
+
+            try:
+                db.commit()
+            except Exception as e:
+                RNS.log("An error occurred while updating conversation PTT option: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                # if not is_retry:
+                #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                #     self._db_conversation_set_ptt_enabled(context_dest, ptt_enabled, is_retry=True)
 
     def _db_conversation_set_trusted(self, context_dest, trusted):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        query = "UPDATE conv set trust = ? where dest_context = ?"
-        data = (trusted, context_dest)
-        dbc.execute(query, data)
-        result = dbc.fetchall()
-        db.commit()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "UPDATE conv set trust = ? where dest_context = ?"
+            data = (trusted, context_dest)
+            dbc.execute(query, data)
+            result = dbc.fetchall()
+
+            try:
+                db.commit()
+            except Exception as e:
+                RNS.log("An error occurred while updating conversation trusted option: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                # if not is_retry:
+                #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                #     self._db_conversation_set_trusted(context_dest, trusted, is_retry=True)
 
     def _db_conversation_set_name(self, context_dest, name):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        query = "UPDATE conv set name=:name_data where dest_context=:ctx;"
-        dbc.execute(query, {"ctx": context_dest, "name_data": name.encode("utf-8")})
-        result = dbc.fetchall()
-        db.commit()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "UPDATE conv set name=:name_data where dest_context=:ctx;"
+            dbc.execute(query, {"ctx": context_dest, "name_data": name.encode("utf-8")})
+            result = dbc.fetchall()
+            
+            try:
+                db.commit()
+            except Exception as e:
+                RNS.log("An error occurred while updating conversation name option: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                # if not is_retry:
+                #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                #     self._db_conversation_set_name(context_dest, name, is_retry=True)
 
-    def _db_conversations(self):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        dbc.execute("select * from conv")
-        result = dbc.fetchall()
+    def _db_conversations(self, conversations=True, objects=False):
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            dbc.execute("select * from conv")
+            result = dbc.fetchall()
 
-        if len(result) < 1:
-            return None
-        else:
-            convs = []
-            for entry in result:
-                last_rx = entry[1]
-                last_tx = entry[2]
-                last_activity = max(last_rx, last_tx)
-                data = None
-                try:
-                    data = msgpack.unpackb(entry[7])
-                except:
-                    pass
+            if len(result) < 1:
+                return None
+            else:
+                convs = []
+                for entry in result:
+                    is_object = False
+                    last_rx = entry[1]
+                    last_tx = entry[2]
+                    last_activity = max(last_rx, last_tx)
+                    data = None
+                    try:
+                        data = msgpack.unpackb(entry[7])
+                        if "is_object" in data:
+                            is_object = data["is_object"]
+                    except:
+                        pass
 
-                conv = {
-                    "dest": entry[0],
-                    "unread": entry[3],
-                    "last_rx": last_rx,
-                    "last_tx": last_tx,
-                    "last_activity": last_activity,
-                    "trust": entry[5],
-                    "data": data,
-                }
-                convs.append(conv)
+                    conv = {
+                        "dest": entry[0],
+                        "unread": entry[3],
+                        "last_rx": last_rx,
+                        "last_tx": last_tx,
+                        "last_activity": last_activity,
+                        "trust": entry[5],
+                        "data": data,
+                    }
+                    should_add = False
+                    if conversations and not is_object:
+                        should_add = True
+                    if objects and is_object:
+                        should_add = True
 
-            return sorted(convs, key=lambda c: c["last_activity"], reverse=True)
+                    if should_add:
+                        convs.append(conv)
+
+                return sorted(convs, key=lambda c: c["last_activity"], reverse=True)
 
     def _db_announces(self):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        dbc.execute("select * from announce order by received desc")
-        result = dbc.fetchall()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            dbc.execute("select * from announce order by received desc")
+            result = dbc.fetchall()
 
-        if len(result) < 1:
-            return None
-        else:
-            announces = []
-            added_dests = []
-            for entry in result:
-                try:
-                    if not entry[2] in added_dests:
-                        announce = {
-                            "dest": entry[2],
-                            "data": entry[3].decode("utf-8"),
-                            "time": entry[1],
-                            "type": entry[4]
-                        }
-                        added_dests.append(entry[2])
-                        announces.append(announce)
-                except Exception as e:
-                    RNS.log("Exception while fetching announce from DB: "+str(e), RNS.LOG_ERROR)
+            if len(result) < 1:
+                return None
+            else:
+                announces = []
+                added_dests = []
+                for entry in result:
+                    try:
+                        if not entry[2] in added_dests:
+                            announce = {
+                                "dest": entry[2],
+                                "data": entry[3].decode("utf-8"),
+                                "time": entry[1],
+                                "type": entry[4]
+                            }
+                            added_dests.append(entry[2])
+                            announces.append(announce)
+                    except Exception as e:
+                        RNS.log("Exception while fetching announce from DB: "+str(e), RNS.LOG_ERROR)
 
-            announces.reverse()
-            return announces
+                announces.reverse()
+                return announces
 
     def _db_conversation(self, context_dest):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        query = "select * from conv where dest_context=:ctx"
-        dbc.execute(query, {"ctx": context_dest})
-        result = dbc.fetchall()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "select * from conv where dest_context=:ctx"
+            dbc.execute(query, {"ctx": context_dest})
+            result = dbc.fetchall()
 
-        if len(result) < 1:
-            return None
-        else:
-            c = result[0]
-            conv = {}
-            conv["dest"] = c[0]
-            conv["last_tx"] = c[1]
-            conv["last_rx"] = c[2]
-            conv["unread"] = c[3]
-            conv["type"] = c[4]
-            conv["trust"] = c[5]
-            conv["name"] = c[6].decode("utf-8")
-            conv["data"] = msgpack.unpackb(c[7])
-            conv["last_activity"] = max(c[1], c[2])
-            return conv
+            if len(result) < 1:
+                return None
+            else:
+                c = result[0]
+                conv = {}
+                conv["dest"] = c[0]
+                conv["last_tx"] = c[1]
+                conv["last_rx"] = c[2]
+                conv["unread"] = c[3]
+                conv["type"] = c[4]
+                conv["trust"] = c[5]
+                conv["name"] = c[6].decode("utf-8")
+                conv["data"] = msgpack.unpackb(c[7])
+                conv["last_activity"] = max(c[1], c[2])
+                return conv
 
     def _db_clear_conversation(self, context_dest):
         RNS.log("Clearing conversation with "+RNS.prettyhexrep(context_dest), RNS.LOG_DEBUG)
-        db = self.__db_connect()
-        dbc = db.cursor()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
 
-        query = "delete from lxm where (dest=:ctx_dst or source=:ctx_dst);"
-        dbc.execute(query, {"ctx_dst": context_dest})
-        db.commit()
+            query = "delete from lxm where (dest=:ctx_dst or source=:ctx_dst);"
+            dbc.execute(query, {"ctx_dst": context_dest})
+            db.commit()
 
     def _db_clear_telemetry(self, context_dest):
         RNS.log("Clearing telemetry for "+RNS.prettyhexrep(context_dest), RNS.LOG_DEBUG)
-        db = self.__db_connect()
-        dbc = db.cursor()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
 
-        query = "delete from telemetry where dest_context=:ctx_dst;"
-        dbc.execute(query, {"ctx_dst": context_dest})
-        db.commit()
+            query = "delete from telemetry where dest_context=:ctx_dst;"
+            dbc.execute(query, {"ctx_dst": context_dest})
+            db.commit()
 
         self.setstate("app.flags.last_telemetry", time.time())
 
     def _db_delete_conversation(self, context_dest):
         RNS.log("Deleting conversation with "+RNS.prettyhexrep(context_dest), RNS.LOG_DEBUG)
-        db = self.__db_connect()
-        dbc = db.cursor()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
 
-        query = "delete from conv where (dest_context=:ctx_dst);"
-        dbc.execute(query, {"ctx_dst": context_dest})
-        db.commit()
+            query = "delete from conv where (dest_context=:ctx_dst);"
+            dbc.execute(query, {"ctx_dst": context_dest})
+            db.commit()
 
 
     def _db_delete_announce(self, context_dest):
         RNS.log("Deleting announce with "+RNS.prettyhexrep(context_dest), RNS.LOG_DEBUG)
-        db = self.__db_connect()
-        dbc = db.cursor()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
 
-        query = "delete from announce where (source=:ctx_dst);"
-        dbc.execute(query, {"ctx_dst": context_dest})
-        db.commit()
+            query = "delete from announce where (source=:ctx_dst);"
+            dbc.execute(query, {"ctx_dst": context_dest})
+            db.commit()
 
     def _db_create_conversation(self, context_dest, name = None, trust = False):
         RNS.log("Creating conversation for "+RNS.prettyhexrep(context_dest), RNS.LOG_DEBUG)
-        db = self.__db_connect()
-        dbc = db.cursor()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
 
-        def_name = "".encode("utf-8")
-        query = "INSERT INTO conv (dest_context, last_tx, last_rx, unread, type, trust, name, data) values (?, ?, ?, ?, ?, ?, ?, ?)"
-        data = (context_dest, 0, time.time(), 0, SidebandCore.CONV_P2P, 0, def_name, msgpack.packb(None))
+            def_name = "".encode("utf-8")
+            query = "INSERT INTO conv (dest_context, last_tx, last_rx, unread, type, trust, name, data) values (?, ?, ?, ?, ?, ?, ?, ?)"
+            data = (context_dest, 0, time.time(), 0, SidebandCore.CONV_P2P, 0, def_name, msgpack.packb(None))
 
-        dbc.execute(query, data)
-        db.commit()
+            dbc.execute(query, data)
+            db.commit()
 
         if trust:
             self._db_conversation_set_trusted(context_dest, True)
@@ -2172,123 +2424,105 @@ class SidebandCore():
 
     def _db_delete_message(self, msg_hash):
         RNS.log("Deleting message "+RNS.prettyhexrep(msg_hash))
-        db = self.__db_connect()
-        dbc = db.cursor()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
 
-        query = "delete from lxm where (lxm_hash=:mhash);"
-        dbc.execute(query, {"mhash": msg_hash})
-        db.commit()
+            query = "delete from lxm where (lxm_hash=:mhash);"
+            dbc.execute(query, {"mhash": msg_hash})
+            db.commit()
 
     def _db_clean_messages(self):
         RNS.log("Purging stale messages... "+str(self.db_path))
-        db = self.__db_connect()
-        dbc = db.cursor()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
 
-        query = "delete from lxm where (state=:outbound_state or state=:sending_state);"
-        dbc.execute(query, {"outbound_state": LXMF.LXMessage.OUTBOUND, "sending_state": LXMF.LXMessage.SENDING})
-        db.commit()
+            query = "delete from lxm where (state=:outbound_state or state=:sending_state);"
+            dbc.execute(query, {"outbound_state": LXMF.LXMessage.OUTBOUND, "sending_state": LXMF.LXMessage.SENDING})
+            db.commit()
 
-    def _db_message_set_state(self, lxm_hash, state):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        query = "UPDATE lxm set state = ? where lxm_hash = ?"
-        data = (state, lxm_hash)
-        dbc.execute(query, data)
-        db.commit()
-        result = dbc.fetchall()
+    def _db_message_set_state(self, lxm_hash, state, is_retry=False, ratchet_id=None, originator_stamp=None):
+        msg_extras = None
+        if ratchet_id != None:
+            try:
+                msg = self._db_message(lxm_hash)
+                if msg != None:
+                    msg_extras = msg["extras"]
+
+                if ratchet_id:
+                    msg_extras["ratchet_id"] = ratchet_id
+
+                if originator_stamp:
+                    msg_extras["stamp_checked"] = False
+                    msg_extras["stamp_raw"] = originator_stamp[0]
+                    msg_extras["stamp_valid"] = originator_stamp[1]
+                    msg_extras["stamp_value"] = originator_stamp[2]
+
+            except Exception as e:
+                RNS.log("An error occurred while getting message extras: "+str(e))
+
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+
+            if msg_extras != None:
+                extras = msgpack.packb(msg_extras)
+                query = "UPDATE lxm set state = ?, extra = ? where lxm_hash = ?"
+                data = (state, extras, lxm_hash)
+                
+            else:
+                query = "UPDATE lxm set state = ? where lxm_hash = ?"
+                data = (state, lxm_hash)
+
+            dbc.execute(query, data)
+
+            try:
+                db.commit()
+                result = dbc.fetchall()
+            except Exception as e:
+                RNS.log("An error occurred while updating message state: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                # if not is_retry:
+                #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                #     self._db_message_set_state(lxm_hash, state, is_retry=True)
 
     def _db_message_set_method(self, lxm_hash, method):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        query = "UPDATE lxm set method = ? where lxm_hash = ?"
-        data = (method, lxm_hash)
-        dbc.execute(query, data)
-        db.commit()
-        result = dbc.fetchall()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "UPDATE lxm set method = ? where lxm_hash = ?"
+            data = (method, lxm_hash)
+            dbc.execute(query, data)
+
+            try:
+                db.commit()
+                result = dbc.fetchall()
+            except Exception as e:
+                RNS.log("An error occurred while updating message method: "+str(e), RNS.LOG_ERROR)
+                self.__db_reconnect()
+                # if not is_retry:
+                #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                #     self._db_message_set_method(lxm_hash, method, is_retry=True)
 
     def message(self, msg_hash):
         return self._db_message(msg_hash)
 
     def _db_message(self, msg_hash):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        query = "select * from lxm where lxm_hash=:mhash"
-        dbc.execute(query, {"mhash": msg_hash})
-        result = dbc.fetchall()
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "select * from lxm where lxm_hash=:mhash"
+            dbc.execute(query, {"mhash": msg_hash})
+            result = dbc.fetchall()
 
-        if len(result) < 1:
-            return None
-        else:
-            entry = result[0]
-
-            lxm_method = entry[7]
-            if lxm_method == LXMF.LXMessage.PAPER:
-                lxm_data = msgpack.unpackb(entry[10])
-                packed_lxm = lxm_data[0]
-                paper_packed_lxm = lxm_data[1]
+            if len(result) < 1:
+                return None
             else:
-                packed_lxm = entry[10]
+                entry = result[0]
 
-            lxm = LXMF.LXMessage.unpack_from_bytes(packed_lxm, original_method = lxm_method)
-
-            if lxm.desired_method == LXMF.LXMessage.PAPER:
-                lxm.paper_packed = paper_packed_lxm
-
-            message = {
-                "hash": lxm.hash,
-                "dest": lxm.destination_hash,
-                "source": lxm.source_hash,
-                "title": lxm.title,
-                "content": lxm.content,
-                "received": entry[5],
-                "sent": lxm.timestamp,
-                "state": entry[6],
-                "method": entry[7],
-                "lxm": lxm
-            }
-            return message
-
-    def _db_message_count(self, context_dest):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        query = "select count(*) from lxm where dest=:context_dest or source=:context_dest"
-        dbc.execute(query, {"context_dest": context_dest})
-
-        result = dbc.fetchall()
-
-        if len(result) < 1:
-            return None
-        else:
-            return result[0][0]
-
-    def _db_messages(self, context_dest, after = None, before = None, limit = None):
-        db = self.__db_connect()
-        dbc = db.cursor()
-        
-        if after != None and before == None:
-            query = "select * from lxm where (dest=:context_dest or source=:context_dest) and rx_ts>:after_ts"
-            dbc.execute(query, {"context_dest": context_dest, "after_ts": after})
-        elif after == None and before != None:
-            query = "select * from lxm where (dest=:context_dest or source=:context_dest) and rx_ts<:before_ts"
-            dbc.execute(query, {"context_dest": context_dest, "before_ts": before})
-        elif after != None and before != None:
-            query = "select * from lxm where (dest=:context_dest or source=:context_dest) and rx_ts<:before_ts and rx_ts>:after_ts"
-            dbc.execute(query, {"context_dest": context_dest, "before_ts": before, "after_ts": after})
-        else:
-            query = "select * from lxm where dest=:context_dest or source=:context_dest"
-            dbc.execute(query, {"context_dest": context_dest})
-
-        result = dbc.fetchall()
-
-        if len(result) < 1:
-            return None
-        else:
-            messages = []
-            for entry in result:
                 lxm_method = entry[7]
                 if lxm_method == LXMF.LXMessage.PAPER:
                     lxm_data = msgpack.unpackb(entry[10])
@@ -2297,17 +2531,17 @@ class SidebandCore():
                 else:
                     packed_lxm = entry[10]
 
-                lxm = LXMF.LXMessage.unpack_from_bytes(packed_lxm, original_method = lxm_method)
-                
-                if lxm.desired_method == LXMF.LXMessage.PAPER:
-                    lxm.paper_packed = paper_packed_lxm
-
                 extras = None
                 try:
                     extras = msgpack.unpackb(entry[11])
                 except:
                     pass
-                
+
+                lxm = LXMF.LXMessage.unpack_from_bytes(packed_lxm, original_method = lxm_method)
+
+                if lxm.desired_method == LXMF.LXMessage.PAPER:
+                    lxm.paper_packed = paper_packed_lxm
+
                 message = {
                     "hash": lxm.hash,
                     "dest": lxm.destination_hash,
@@ -2321,13 +2555,87 @@ class SidebandCore():
                     "lxm": lxm,
                     "extras": extras,
                 }
+                return message
 
-                messages.append(message)
-            if len(messages) > limit:
-                messages = messages[-limit:]
-            return messages
+    def _db_message_count(self, context_dest):
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            query = "select count(*) from lxm where dest=:context_dest or source=:context_dest"
+            dbc.execute(query, {"context_dest": context_dest})
 
-    def _db_save_lxm(self, lxm, context_dest, originator = False, own_command = False):
+            result = dbc.fetchall()
+
+            if len(result) < 1:
+                return None
+            else:
+                return result[0][0]
+
+    def _db_messages(self, context_dest, after = None, before = None, limit = None):
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+            
+            if after != None and before == None:
+                query = "select * from lxm where (dest=:context_dest or source=:context_dest) and rx_ts>:after_ts"
+                dbc.execute(query, {"context_dest": context_dest, "after_ts": after})
+            elif after == None and before != None:
+                query = "select * from lxm where (dest=:context_dest or source=:context_dest) and rx_ts<:before_ts"
+                dbc.execute(query, {"context_dest": context_dest, "before_ts": before})
+            elif after != None and before != None:
+                query = "select * from lxm where (dest=:context_dest or source=:context_dest) and rx_ts<:before_ts and rx_ts>:after_ts"
+                dbc.execute(query, {"context_dest": context_dest, "before_ts": before, "after_ts": after})
+            else:
+                query = "select * from lxm where dest=:context_dest or source=:context_dest"
+                dbc.execute(query, {"context_dest": context_dest})
+
+            result = dbc.fetchall()
+
+            if len(result) < 1:
+                return None
+            else:
+                messages = []
+                for entry in result:
+                    lxm_method = entry[7]
+                    if lxm_method == LXMF.LXMessage.PAPER:
+                        lxm_data = msgpack.unpackb(entry[10])
+                        packed_lxm = lxm_data[0]
+                        paper_packed_lxm = lxm_data[1]
+                    else:
+                        packed_lxm = entry[10]
+
+                    lxm = LXMF.LXMessage.unpack_from_bytes(packed_lxm, original_method = lxm_method)
+                    
+                    if lxm.desired_method == LXMF.LXMessage.PAPER:
+                        lxm.paper_packed = paper_packed_lxm
+
+                    extras = None
+                    try:
+                        extras = msgpack.unpackb(entry[11])
+                    except:
+                        pass
+                    
+                    message = {
+                        "hash": lxm.hash,
+                        "dest": lxm.destination_hash,
+                        "source": lxm.source_hash,
+                        "title": lxm.title,
+                        "content": lxm.content,
+                        "received": entry[5],
+                        "sent": lxm.timestamp,
+                        "state": entry[6],
+                        "method": entry[7],
+                        "lxm": lxm,
+                        "extras": extras,
+                    }
+
+                    messages.append(message)
+                if len(messages) > limit:
+                    messages = messages[-limit:]
+                return messages
+
+    def _db_save_lxm(self, lxm, context_dest, originator = False, own_command = False, is_retry = False):
         state = lxm.state
 
         packed_telemetry = None
@@ -2367,83 +2675,114 @@ class SidebandCore():
                         RNS.log("Received telemetry stream field with no data: "+str(lxm.fields[LXMF.FIELD_TELEMETRY_STREAM]), RNS.LOG_DEBUG)
 
         if own_command or len(lxm.content) != 0 or len(lxm.title) != 0:
+            with self.db_lock:
+                db = self.__db_connect()
+                dbc = db.cursor()
+
+                if not lxm.packed:
+                    lxm.pack()
+
+                if lxm.method == LXMF.LXMessage.PAPER:
+                    packed_lxm = msgpack.packb([lxm.packed, lxm.paper_packed])
+                else:
+                    packed_lxm = lxm.packed
+
+                extras = {}
+                if lxm.rssi or lxm.snr or lxm.q:
+                    extras["rssi"] = lxm.rssi
+                    extras["snr"] = lxm.snr
+                    extras["q"] = lxm.q
+
+                if lxm.stamp_checked:
+                    extras["stamp_checked"] = True
+                    extras["stamp_valid"] = lxm.stamp_valid
+                    extras["stamp_value"] = lxm.stamp_value
+                    extras["stamp_raw"] = lxm.stamp
+
+                if lxm.ratchet_id:
+                    extras["ratchet_id"] = lxm.ratchet_id
+
+                if packed_telemetry != None:
+                    extras["packed_telemetry"] = packed_telemetry
+
+                extras = msgpack.packb(extras)
+
+                query = "INSERT INTO lxm (lxm_hash, dest, source, title, tx_ts, rx_ts, state, method, t_encrypted, t_encryption, data, extra) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                data = (
+                    lxm.hash,
+                    lxm.destination_hash,
+                    lxm.source_hash,
+                    lxm.title,
+                    lxm.timestamp,
+                    time.time(),
+                    state,
+                    lxm.method,
+                    lxm.transport_encrypted,
+                    lxm.transport_encryption,
+                    packed_lxm,
+                    extras
+                )
+
+                dbc.execute(query, data)
+
+                try:
+                    db.commit()
+                except Exception as e:
+                    RNS.log("An error occurred while saving message to database: "+str(e), RNS.LOG_ERROR)
+                    self.__db_reconnect()
+                    # if not is_retry:
+                    #     RNS.log("Retrying operation...", RNS.LOG_ERROR)
+                    #     self._db_save_lxm(lxm, context_dest, originator = originator, own_command = own_command, is_retry = True)
+                    # return
+
+            self.__event_conversation_changed(context_dest)
+
+    def _db_save_announce(self, destination_hash, app_data, dest_type="lxmf.delivery"):
+        with self.db_lock:
             db = self.__db_connect()
             dbc = db.cursor()
 
-            if not lxm.packed:
-                lxm.pack()
+            query = "delete from announce where id is NULL or id not in (select id from announce order by received desc limit "+str(self.MAX_ANNOUNCES)+")"
+            dbc.execute(query)
 
-            if lxm.method == LXMF.LXMessage.PAPER:
-                packed_lxm = msgpack.packb([lxm.packed, lxm.paper_packed])
-            else:
-                packed_lxm = lxm.packed
+            query = "delete from announce where (source=:source);"
+            dbc.execute(query, {"source": destination_hash})
 
-            extras = {}
-            if lxm.rssi or lxm.snr or lxm.q:
-                extras["rssi"] = lxm.rssi
-                extras["snr"] = lxm.snr
-                extras["q"] = lxm.q
+            now = time.time()
+            hash_material = str(time).encode("utf-8")+destination_hash+app_data+dest_type.encode("utf-8")
+            announce_hash = RNS.Identity.full_hash(hash_material)
 
-            if packed_telemetry != None:
-                extras["packed_telemetry"] = packed_telemetry
-
-            extras = msgpack.packb(extras)
-
-            query = "INSERT INTO lxm (lxm_hash, dest, source, title, tx_ts, rx_ts, state, method, t_encrypted, t_encryption, data, extra) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            query = "INSERT INTO announce (id, received, source, data, dest_type) values (?, ?, ?, ?, ?)"
             data = (
-                lxm.hash,
-                lxm.destination_hash,
-                lxm.source_hash,
-                lxm.title,
-                lxm.timestamp,
-                time.time(),
-                state,
-                lxm.method,
-                lxm.transport_encrypted,
-                lxm.transport_encryption,
-                packed_lxm,
-                extras
+                announce_hash,
+                now,
+                destination_hash,
+                app_data,
+                dest_type,
             )
 
             dbc.execute(query, data)
             db.commit()
 
-            self.__event_conversation_changed(context_dest)
-
-    def _db_save_announce(self, destination_hash, app_data, dest_type="lxmf.delivery"):
-        db = self.__db_connect()
-        dbc = db.cursor()
-
-        query = "delete from announce where id is NULL or id not in (select id from announce order by received desc limit "+str(self.MAX_ANNOUNCES)+")"
-        dbc.execute(query)
-
-        query = "delete from announce where (source=:source);"
-        dbc.execute(query, {"source": destination_hash})
-
-        now = time.time()
-        hash_material = str(time).encode("utf-8")+destination_hash+app_data+dest_type.encode("utf-8")
-        announce_hash = RNS.Identity.full_hash(hash_material)
-
-        query = "INSERT INTO announce (id, received, source, data, dest_type) values (?, ?, ?, ?, ?)"
-        data = (
-            announce_hash,
-            now,
-            destination_hash,
-            app_data,
-            dest_type,
-        )
-
-        dbc.execute(query, data)
-        db.commit()
-
     def lxmf_announce(self, attached_interface=None):
         if self.is_standalone or self.is_service:
-            self.lxmf_destination.announce(attached_interface=attached_interface)
+            if self.config["lxmf_require_stamps"]:
+                self.message_router.set_inbound_stamp_cost(self.lxmf_destination.hash, self.config["lxmf_inbound_stamp_cost"])
+                self.message_router.announce(self.lxmf_destination.hash, attached_interface=attached_interface)
+            else:
+                self.message_router.set_inbound_stamp_cost(self.lxmf_destination.hash, None)
+                self.lxmf_destination.announce(attached_interface=attached_interface)
             self.last_lxmf_announce = time.time()
-            self.next_auto_announce = time.time() + 60*(random.random()*(SidebandCore.AUTO_ANNOUNCE_RANDOM_MAX-SidebandCore.AUTO_ANNOUNCE_RANDOM_MIN))
+            self.next_auto_announce = time.time() + 60*(random.random()*(SidebandCore.AUTO_ANNOUNCE_RANDOM_MAX-SidebandCore.AUTO_ANNOUNCE_RANDOM_MIN)+SidebandCore.AUTO_ANNOUNCE_RANDOM_MIN)
             RNS.log("Next auto announce in "+RNS.prettytime(self.next_auto_announce-time.time()), RNS.LOG_DEBUG)
             self.setstate("wants.announce", False)
+        
         else:
+            if self.config["lxmf_require_stamps"]:
+                self.message_router.set_inbound_stamp_cost(self.lxmf_destination.hash, self.config["lxmf_inbound_stamp_cost"])
+            else:
+                self.message_router.set_inbound_stamp_cost(self.lxmf_destination.hash, None)
+            
             self.setstate("wants.announce", True)
 
     def run_telemetry(self):
@@ -2482,33 +2821,42 @@ class SidebandCore():
 
     def update_telemetry(self):
         try:
+            try:
+                latest_telemetry = deepcopy(self.latest_telemetry)
+            except:
+                latest_telemetry = None
+
             telemetry = self.get_telemetry()
             packed_telemetry = self.get_packed_telemetry()
             telemetry_changed = False
 
             if telemetry != None and packed_telemetry != None:
-                if self.latest_telemetry == None or len(telemetry) != len(self.latest_telemetry):
+                if latest_telemetry == None or len(telemetry) != len(latest_telemetry):
                     telemetry_changed = True
 
-                for sn in telemetry:
-                    if telemetry_changed:
-                        break
+                if latest_telemetry != None:
 
-                    if sn != "time":
-                        if sn in self.latest_telemetry:
-                            if telemetry[sn] != self.latest_telemetry[sn]:
-                                telemetry_changed = True
-                        else:
-                            telemetry_changed = True
+                    if not telemetry_changed:
+                        for sn in telemetry:
+                            if telemetry_changed:
+                                break
 
-                if self.latest_telemetry != None:
-                    for sn in self.latest_telemetry:
-                        if telemetry_changed:
-                            break
+                            if sn != "time":
+                                if sn in latest_telemetry:
+                                    if telemetry[sn] != latest_telemetry[sn]:
+                                        telemetry_changed = True
+                                else:
+                                    telemetry_changed = True
 
-                        if sn != "time":
-                            if not sn in telemetry:
-                                telemetry_changed = True
+                    if not telemetry_changed:
+                        for sn in latest_telemetry:
+
+                            if telemetry_changed:
+                                break
+
+                            if sn != "time":
+                                if not sn in telemetry:
+                                    telemetry_changed = True
 
                 if telemetry_changed:
                     self.telemetry_changes += 1
@@ -2621,6 +2969,19 @@ class SidebandCore():
         except Exception as e:
             RNS.log("Error while querying for key: "+str(e), RNS.LOG_ERROR)
             return False
+
+    def _update_delivery_limits(self):
+        try:
+            if self.config["lxm_limit_1mb"]:
+                lxm_limit = 1000
+            else:
+                lxm_limit = self.default_lxm_limit
+            if self.message_router.delivery_per_transfer_limit != lxm_limit:
+                self.message_router.delivery_per_transfer_limit = lxm_limit
+                RNS.log("Updated delivery limit to "+RNS.prettysize(self.message_router.delivery_per_transfer_limit*1000), RNS.LOG_DEBUG)
+                
+        except Exception as e:
+            RNS.log("Error while updating LXMF router delivery limit: "+str(e), RNS.LOG_ERROR)
 
     def _service_jobs(self):
         if self.is_service:
@@ -2815,6 +3176,8 @@ class SidebandCore():
                 time.sleep(SidebandCore.PERIODIC_JOBS_INTERVAL)
                 if self.owner_service != None:
                     self.owner_service.update_location_provider()
+
+                self._update_delivery_limits()
 
                 if self.config["lxmf_periodic_sync"] == True:
                     if self.getpersistent("lxmf.lastsync") == None:
@@ -3407,13 +3770,26 @@ class SidebandCore():
         if self.config["lxm_limit_1mb"]:
             lxm_limit = 1000
         else:
-            lxm_limit = 128*1000
+            lxm_limit = self.default_lxm_limit
 
         self.message_router = LXMF.LXMRouter(identity = self.identity, storagepath = self.lxmf_storage, autopeer = True, delivery_limit = lxm_limit)
         self.message_router.register_delivery_callback(self.lxmf_delivery)
 
-        self.lxmf_destination = self.message_router.register_delivery_identity(self.identity, display_name=self.config["display_name"])
-        self.lxmf_destination.set_default_app_data(self.get_display_name_bytes)
+        configured_stamp_cost = None
+        if self.config["lxmf_require_stamps"]:
+            configured_stamp_cost = self.config["lxmf_inbound_stamp_cost"]
+
+        self.lxmf_destination = self.message_router.register_delivery_identity(self.identity, display_name=self.config["display_name"], stamp_cost=configured_stamp_cost)
+        if self.config["lxmf_ignore_invalid_stamps"]:
+            self.message_router.enforce_stamps()
+        else:
+            self.message_router.ignore_stamps()
+        
+        # TODO: Update to announce call in LXMF when full 0.5.0 support is added (get app data from LXMRouter instead)
+        # Currently overrides the LXMF routers auto-generated announce data so that Sideband will announce old-format
+        # LXMF announces if require_stamps is disabled.
+        # if not self.config["lxmf_require_stamps"]:
+        #     self.lxmf_destination.set_default_app_data(self.get_display_name_bytes)
 
         self.rns_dir = RNS.Reticulum.configdir
 
@@ -3428,19 +3804,31 @@ class SidebandCore():
             else:
                 self.set_active_propagation_node(None)
 
+    def update_ignore_invalid_stamps(self):
+        if self.config["lxmf_ignore_invalid_stamps"]:
+            self.message_router.enforce_stamps()
+        else:
+            self.message_router.ignore_stamps()
+
     def message_notification_no_display(self, message):
         self.message_notification(message, no_display=True)
 
     def message_notification(self, message, no_display=False):
         if message.state == LXMF.LXMessage.FAILED and hasattr(message, "try_propagation_on_fail") and message.try_propagation_on_fail:
-            RNS.log("Direct delivery of "+str(message)+" failed. Retrying as propagated message.", RNS.LOG_VERBOSE)
-            message.try_propagation_on_fail = None
-            message.delivery_attempts = 0
-            del message.next_delivery_attempt
-            message.packed = None
-            message.desired_method = LXMF.LXMessage.PROPAGATED
-            self._db_message_set_method(message.hash, LXMF.LXMessage.PROPAGATED)
-            self.message_router.handle_outbound(message)
+            if hasattr(message, "stamp_generation_failed") and message.stamp_generation_failed == True:
+                RNS.log(f"Could not send {message} due to a stamp generation failure", RNS.LOG_ERROR)
+                if not no_display:
+                    self.lxm_ingest(message, originator=True)
+            else:
+                RNS.log("Direct delivery of "+str(message)+" failed. Retrying as propagated message.", RNS.LOG_VERBOSE)
+                message.try_propagation_on_fail = None
+                message.delivery_attempts = 0
+                if hasattr(message, "next_delivery_attempt"):
+                    del message.next_delivery_attempt
+                message.packed = None
+                message.desired_method = LXMF.LXMessage.PROPAGATED
+                self._db_message_set_method(message.hash, LXMF.LXMessage.PROPAGATED)
+                self.message_router.handle_outbound(message)
         else:
             if not no_display:
                 self.lxm_ingest(message, originator=True)
@@ -3450,7 +3838,7 @@ class SidebandCore():
                     try:
                         telemeter = Telemeter.from_packed(message.fields[LXMF.FIELD_TELEMETRY])
                         telemetry_timebase = telemeter.read_all()["time"]["utc"]
-                        RNS.log("Setting last successul telemetry timebase for "+RNS.prettyhexrep(message.destination_hash)+" to "+str(telemetry_timebase))
+                        RNS.log("Setting last successul telemetry timebase for "+RNS.prettyhexrep(message.destination_hash)+" to "+str(telemetry_timebase), RNS.LOG_DEBUG)
                         self.setpersistent(f"telemetry.{RNS.hexrep(message.destination_hash, delimit=False)}.last_send_success_timebase", telemetry_timebase)
                     except Exception as e:
                         RNS.log("Error while setting last successul telemetry timebase for "+RNS.prettyhexrep(message.destination_hash), RNS.LOG_DEBUG)
@@ -3463,10 +3851,11 @@ class SidebandCore():
         if send_telemetry and self.latest_packed_telemetry != None:
             telemeter = Telemeter.from_packed(self.latest_packed_telemetry)
             telemetry_timebase = telemeter.read_all()["time"]["utc"]
-            if telemetry_timebase > (self.getpersistent(f"telemetry.{RNS.hexrep(context_dest, delimit=False)}.last_send_success_timebase") or 0):
+            last_success_tb = (self.getpersistent(f"telemetry.{RNS.hexrep(context_dest, delimit=False)}.last_send_success_timebase") or 0)
+            if telemetry_timebase > last_success_tb:
                 RNS.log("Embedding own telemetry in message since current telemetry is newer than latest successful timebase", RNS.LOG_DEBUG)
             else:
-                RNS.log("Not embedding own telemetry in message since current telemetry is not newer than latest successful timebase", RNS.LOG_DEBUG)
+                RNS.log("Not embedding own telemetry in message since current telemetry timebase ("+str(telemetry_timebase)+") is not newer than latest successful timebase ("+str(last_success_tb)+")", RNS.LOG_DEBUG)
                 send_telemetry = False
                 send_appearance = False
                 if signal_already_sent:
@@ -3505,7 +3894,8 @@ class SidebandCore():
             source = self.lxmf_destination
             
             desired_method = LXMF.LXMessage.PAPER
-            lxm = LXMF.LXMessage(dest, source, content, title="", desired_method=desired_method, fields = self.get_message_fields(destination_hash))
+            # TODO: Should paper messages also include a ticket to trusted peers?
+            lxm = LXMF.LXMessage(dest, source, content, title="", desired_method=desired_method, fields = self.get_message_fields(destination_hash), include_ticket=self.is_trusted(destination_hash))
 
             self.lxm_ingest(lxm, originator=True)
 
@@ -3520,6 +3910,13 @@ class SidebandCore():
             return self.message_router.get_outbound_progress(lxm_hash)
         except Exception as e:
             RNS.log("An error occurred while getting message transfer progress: "+str(e), RNS.LOG_ERROR)
+            return None
+
+    def get_lxm_stamp_cost(self, lxm_hash):
+        try:
+            return self.message_router.get_outbound_lxm_stamp_cost(lxm_hash)
+        except Exception as e:
+            RNS.log("An error occurred while getting message transfer stamp cost: "+str(e), RNS.LOG_ERROR)
             return None
 
     def send_message(self, content, destination_hash, propagation, skip_fields=False, no_display=False, attachment = None, image = None, audio = None):
@@ -3545,8 +3942,10 @@ class SidebandCore():
                 fields[LXMF.FIELD_FILE_ATTACHMENTS] = [attachment]
             if image != None:
                 fields[LXMF.FIELD_IMAGE] = image
+            if audio != None:
+                fields[LXMF.FIELD_AUDIO] = audio
 
-            lxm = LXMF.LXMessage(dest, source, content, title="", desired_method=desired_method, fields = fields)
+            lxm = LXMF.LXMessage(dest, source, content, title="", desired_method=desired_method, fields = fields, include_ticket=self.is_trusted(destination_hash))
             
             if not no_display:
                 lxm.register_delivery_callback(self.message_notification)
@@ -3560,6 +3959,7 @@ class SidebandCore():
                     lxm.try_propagation_on_fail = True
 
             self.message_router.handle_outbound(lxm)
+
             if not no_display:
                 self.lxm_ingest(lxm, originator=True)
 
@@ -3567,6 +3967,7 @@ class SidebandCore():
 
         except Exception as e:
             RNS.log("Error while sending message: "+str(e), RNS.LOG_ERROR)
+            RNS.trace_exception(e)
             return False
 
     def send_command(self, content, destination_hash, propagation):
@@ -3598,7 +3999,7 @@ class SidebandCore():
             else:
                 desired_method = LXMF.LXMessage.DIRECT
 
-            lxm = LXMF.LXMessage(dest, source, "", title="", desired_method=desired_method, fields = {LXMF.FIELD_COMMANDS: commands})
+            lxm = LXMF.LXMessage(dest, source, "", title="", desired_method=desired_method, fields = {LXMF.FIELD_COMMANDS: commands}, include_ticket=self.is_trusted(destination_hash))
             lxm.register_delivery_callback(self.message_notification)
             lxm.register_failed_callback(self.message_notification)
 
@@ -3666,6 +4067,7 @@ class SidebandCore():
     def lxm_ingest(self, message, originator = False):
         should_notify = False
         is_trusted = False
+        ptt_enabled = False
         telemetry_only = False
         own_command = False
         unread_reason_tx = False
@@ -3676,13 +4078,17 @@ class SidebandCore():
         else:
             context_dest = message.source_hash
             is_trusted = self.is_trusted(context_dest)
+            ptt_enabled = self.ptt_enabled(context_dest)
 
         if originator and LXMF.FIELD_COMMANDS in message.fields:
             own_command = True
 
         if self._db_message(message.hash):
             RNS.log("Message exists, setting state to: "+str(message.state), RNS.LOG_DEBUG)
-            self._db_message_set_state(message.hash, message.state)
+            stamp = None
+            if originator and message.stamp != None:
+                stamp = [message.stamp, message.stamp_valid, message.stamp_value]
+            self._db_message_set_state(message.hash, message.state, ratchet_id=message.ratchet_id, originator_stamp=stamp)
         else:
             RNS.log("Message does not exist, saving", RNS.LOG_DEBUG)
             self._db_save_lxm(message, context_dest, originator, own_command=own_command)
@@ -3694,6 +4100,11 @@ class SidebandCore():
                 if (LXMF.FIELD_TELEMETRY in message.fields or LXMF.FIELD_TELEMETRY_STREAM in message.fields or LXMF.FIELD_COMMANDS in message.fields):
                     RNS.log("Squelching notification due to telemetry-only message", RNS.LOG_DEBUG)
                     telemetry_only = True
+
+            if LXMF.FIELD_TICKET in message.fields:
+                if self.is_service:
+                    RNS.log("Notifying UI of newly arrived delivery ticket", RNS.LOG_DEBUG)
+                    self.setstate("app.flags.new_ticket", True)
 
         if not telemetry_only:
             if self._db_conversation(context_dest) == None:
@@ -3718,6 +4129,10 @@ class SidebandCore():
                     if self.gui_display() == "conversations_screen" and self.gui_foreground():
                         should_notify = False
 
+            if not originator and LXMF.FIELD_AUDIO in message.fields and ptt_enabled:
+                self.ptt_event(message)
+                should_notify = False
+
         if self.is_client:
             should_notify = False
 
@@ -3729,9 +4144,107 @@ class SidebandCore():
             text = message.content.decode("utf-8")
             notification_content = text[:nlen]
             if len(text) > nlen:
-                text += "..."
+                notification_content += " [...]"
 
-            self.notify(title=self.peer_display_name(context_dest), content=notification_content, group="LXM", context_id=RNS.hexrep(context_dest, delimit=False))
+            if len(text) < 2 and LXMF.FIELD_AUDIO in message.fields:
+                notification_content = "Audio message"
+            if len(text) < 2 and LXMF.FIELD_IMAGE in message.fields:
+                notification_content = "Image"
+            if len(text) < 2 and LXMF.FIELD_FILE_ATTACHMENTS in message.fields:
+                notification_content = "File attachment"
+
+            try:
+                self.notify(title=self.peer_display_name(context_dest), content=notification_content, group="LXM", context_id=RNS.hexrep(context_dest, delimit=False))
+            except Exception as e:
+                RNS.log("Could not post notification for received message: "+str(e), RNS.LOG_ERROR)
+
+    def ptt_playback(self, message):
+        ptt_timeout = 60
+        event_time = time.time()
+        while hasattr(self, "msg_sound") and self.msg_sound != None and self.msg_sound.playing() and time.time() < event_time+ptt_timeout:
+            time.sleep(0.1)
+        time.sleep(0.5)
+
+        if self.msg_audio == None:
+            if RNS.vendor.platformutils.is_android():
+                from plyer import audio
+            else:
+                from sbapp.plyer import audio
+
+            RNS.log("Audio init done")
+            self.msg_audio = audio
+        try:
+            temp_path = None
+            audio_field = message.fields[LXMF.FIELD_AUDIO]
+            if self.last_msg_audio != audio_field[1]:
+                RNS.log("Reloading audio source", RNS.LOG_DEBUG)
+                if len(audio_field[1]) > 10:
+                    self.last_msg_audio = audio_field[1]
+                else:
+                    self.last_msg_audio = None
+                    return
+
+                if audio_field[0] == LXMF.AM_OPUS_OGG:
+                    temp_path = self.rec_cache+"/msg.ogg"
+                    with open(temp_path, "wb") as af:
+                        af.write(self.last_msg_audio)
+
+                elif audio_field[0] >= LXMF.AM_CODEC2_700C and audio_field[0] <= LXMF.AM_CODEC2_3200:
+                    temp_path = self.rec_cache+"/msg.ogg"
+                    from sideband.audioproc import samples_to_ogg, decode_codec2, detect_codec2
+                    
+                    target_rate = 8000
+                    if RNS.vendor.platformutils.is_linux():
+                        target_rate = 48000
+
+                    if detect_codec2():
+                        if samples_to_ogg(decode_codec2(audio_field[1], audio_field[0]), temp_path, input_rate=8000, output_rate=target_rate):
+                            RNS.log("Wrote OGG file to: "+temp_path, RNS.LOG_DEBUG)
+                        else:
+                            RNS.log("OGG write failed", RNS.LOG_DEBUG)
+                    else:
+                        self.last_msg_audio = None
+                        return
+                
+                else:
+                    # Unimplemented audio type
+                    pass
+
+                self.msg_sound = self.msg_audio
+                self.msg_sound._file_path = temp_path
+                self.msg_sound.reload()
+
+            if self.msg_sound != None:
+                RNS.log("Starting playback", RNS.LOG_DEBUG)
+                self.msg_sound.play()
+            else:
+                RNS.log("Playback was requested, but no audio data was loaded for playback", RNS.LOG_ERROR)
+
+        except Exception as e:
+            RNS.log("Error while playing message audio:"+str(e))
+            RNS.trace_exception(e)
+
+    def ptt_event(self, message):
+        def ptt_job():
+            try:
+                self.ptt_playback_lock.acquire()
+                while self.ui_recording:
+                    time.sleep(0.5)
+                self.ptt_playback(message)
+            except Exception as e:
+                RNS.log("Error while starting playback for PTT-enabled conversation: "+str(e), RNS.LOG_ERROR)
+            finally:
+                self.ptt_playback_lock.release()
+
+        threading.Thread(target=ptt_job, daemon=True).start()
+
+    def ui_started_recording(self):
+        self.ui_recording = True
+        self.service_rpc_set_ui_recording(True)
+
+    def ui_stopped_recording(self):
+        self.ui_recording = False
+        self.service_rpc_set_ui_recording(False)
 
     def start(self):
         self._db_clean_messages()
@@ -3742,7 +4255,7 @@ class SidebandCore():
         thread.start()
 
         self.setstate("core.started", True)
-        RNS.log("Sideband Core "+str(self)+" started")
+        RNS.log("Sideband Core "+str(self)+" version "+str(self.version_str)+" started")
 
     def stop_webshare(self):
         if self.webshare_server != None:

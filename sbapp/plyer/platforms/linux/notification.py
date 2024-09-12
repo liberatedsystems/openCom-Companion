@@ -4,8 +4,8 @@ Module of Linux API for plyer.notification.
 
 import warnings
 import subprocess
-from plyer.facades import Notification
-from plyer.utils import whereis_exe
+from sbapp.plyer.facades import Notification
+from sbapp.plyer.utils import whereis_exe
 import os
 
 
@@ -63,7 +63,7 @@ class NotifyDbus(Notification):
     def _notify(self, **kwargs):
         summary = kwargs.get('title', "title")
         body = kwargs.get('message', "body")
-        app_name = kwargs.get('app_name', '')
+        app_name = "Sideband"
         app_icon = kwargs.get('app_icon', '')
         timeout = kwargs.get('timeout', 10)
         actions = kwargs.get('actions', [])

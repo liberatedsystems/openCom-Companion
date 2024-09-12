@@ -25,25 +25,31 @@ else:
 
 import io
 import os
-import plyer
 import subprocess
 import shlex
 
 from kivy.graphics.opengl import glGetIntegerv, GL_MAX_TEXTURE_SIZE
 
 if RNS.vendor.platformutils.get_platform() == "android":
+    import plyer
     from sideband.sense import Telemeter, Commands
     from ui.helpers import ts_format, file_ts_format, mdc
-    from ui.helpers import color_received, color_delivered, color_propagated, color_paper, color_failed, color_unknown, intensity_msgs_dark, intensity_msgs_light
+    from ui.helpers import color_playing, color_received, color_delivered, color_propagated, color_paper, color_failed, color_unknown, intensity_msgs_dark, intensity_msgs_light, intensity_play_dark, intensity_play_light
 else:
+    import sbapp.plyer as plyer
     from sbapp.sideband.sense import Telemeter, Commands
     from .helpers import ts_format, file_ts_format, mdc
-    from .helpers import color_received, color_delivered, color_propagated, color_paper, color_failed, color_unknown, intensity_msgs_dark, intensity_msgs_light
+    from .helpers import color_playing, color_received, color_delivered, color_propagated, color_paper, color_failed, color_unknown, intensity_msgs_dark, intensity_msgs_light, intensity_play_dark, intensity_play_light
 
 if RNS.vendor.platformutils.is_darwin():
     from PIL import Image as PilImage
 
 from kivy.lang.builder import Builder
+from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
+
+class DialogItem(OneLineIconListItem):
+    divider = None
+    icon = StringProperty()
 
 class ListLXMessageCard(MDCard):
 # class ListLXMessageCard(MDCard, FakeRectangularElevationBehavior):
@@ -56,6 +62,7 @@ class Messages():
         self.context_dest = context_dest
         self.source_dest = context_dest
         self.is_trusted = self.app.sideband.is_trusted(self.context_dest)
+        self.ptt_enabled = self.app.sideband.ptt_enabled(self.context_dest)
 
         self.screen = self.app.root.ids.screen_manager.get_screen("messages_screen")
         self.ids = self.screen.ids
@@ -71,6 +78,7 @@ class Messages():
         self.widgets = []
         self.send_error_dialog = None
         self.load_more_button = None
+        self.details_dialog = None
         self.update()
 
     def reload(self):
@@ -92,6 +100,99 @@ class Messages():
         if len(self.new_messages) > 0:
             self.loading_earlier_messages = True
             self.list.remove_widget(self.load_more_button)
+
+    def message_details_dialog(self, lxm_hash):
+        RNS.log(f"Opening dialog for {RNS.prettyhexrep(lxm_hash)}", RNS.LOG_DEBUG)
+        ss = int(dp(16))
+        ms = int(dp(14))
+        
+        msg = self.app.sideband.message(lxm_hash)
+        if msg:
+            close_button = MDRectangleFlatButton(text="Close", font_size=dp(18))
+            # d_items = [ ]
+            # d_items.append(DialogItem(IconLeftWidget(icon="postage-stamp"), text="[size="+str(ss)+"]Stamp[/size]"))
+
+            d_text = ""
+
+            if "lxm" in msg and msg["lxm"] != None:
+                size_str = RNS.prettysize(msg["lxm"].packed_size)
+                d_text += f"[size={ss}][b]Message size[/b] {size_str}[/size]\n"
+
+                if msg["lxm"].signature_validated:
+                    d_text += f"[size={ss}][b]Signature[/b] validated successfully[/size]\n"
+                else:
+                    d_text += f"[size={ss}][b]Signature[/b] is invalid[/size]\n"
+
+            ratchet_method = ""
+            if "method" in msg:
+                if msg["method"] == LXMF.LXMessage.UNKNOWN:
+                    d_text += f"[size={ss}][b]Delivered[/b] via unknown method[/size]\n"
+                if msg["method"] == LXMF.LXMessage.OPPORTUNISTIC:
+                    ratchet_method = "with ratchet"
+                    d_text += f"[size={ss}][b]Delivered[/b] opportunistically[/size]\n"
+                if msg["method"] == LXMF.LXMessage.DIRECT:
+                    ratchet_method = "by link"
+                    d_text += f"[size={ss}][b]Delivered[/b] over direct link[/size]\n"
+                if msg["method"] == LXMF.LXMessage.PROPAGATED:
+                    ratchet_method = "with ratchet"
+                    d_text += f"[size={ss}][b]Delivered[/b] to propagation network[/size]\n"
+
+            if msg["extras"] != None and "ratchet_id" in msg["extras"]:
+                r_str = RNS.prettyhexrep(msg["extras"]["ratchet_id"])
+                d_text += f"[size={ss}][b]Encrypted[/b] {ratchet_method} {r_str}[/size]\n"
+            else:
+                if msg["method"] == LXMF.LXMessage.OPPORTUNISTIC or msg["method"] == LXMF.LXMessage.PROPAGATED:
+                    d_text += f"[size={ss}][b]Encrypted[/b] with destination identity key[/size]\n"
+                else:
+                    d_text += f"[size={ss}][b]Encryption[/b] status unknown[/size]\n"
+            
+            if msg["extras"] != None and "stamp_checked" in msg["extras"]:
+                valid_str = " is not valid"
+                if msg["extras"]["stamp_valid"] == True:
+                    valid_str = " is valid"
+                sv = msg["extras"]["stamp_value"]
+                if sv == None:
+                    if "stamp_raw" in msg["extras"]:
+                        sv_str = ""
+                        valid_str = "is not valid"
+                    else:
+                        sv_str = ""
+                        valid_str = "was not included in the message"
+                elif sv > 255:
+                    sv_str = "generated from ticket"
+                else:
+                    sv_str = f"with value {sv}"
+
+                if msg["extras"]["stamp_checked"] == True:
+                    d_text += f"[size={ss}][b]Stamp[/b] {sv_str}{valid_str}[/size]\n"
+
+                else:
+                    sv = msg["extras"]["stamp_value"]
+                    if sv == None:
+                        pass
+                    elif sv > 255:
+                        d_text += f"[size={ss}][b]Stamp[/b] generated from ticket[/size]\n"
+                    else:
+                        d_text += f"[size={ss}][b]Value[/b] of stamp is {sv}[/size]\n"
+
+                # Stamp details
+                if "stamp_raw" in msg["extras"] and type(msg["extras"]["stamp_raw"]) == bytes:
+                    sstr = RNS.hexrep(msg["extras"]["stamp_raw"])
+                    sstr1 = RNS.hexrep(msg["extras"]["stamp_raw"][:16])
+                    sstr2 = RNS.hexrep(msg["extras"]["stamp_raw"][16:])
+                    d_text += f"[size={ss}]\n[b]Raw stamp[/b]\n[/size][size={ms}][font=RobotoMono-Regular]{sstr1}\n{sstr2}[/font][/size]\n"
+
+            self.details_dialog = MDDialog(
+                title="Message Details",
+                type="simple",
+                text=d_text,
+                # items=d_items,
+                buttons=[ close_button ],
+                width_offset=dp(32),
+            )
+
+            close_button.bind(on_release=self.details_dialog.dismiss)
+            self.details_dialog.open()
 
     def update(self, limit=8):
         for new_message in self.app.sideband.list_messages(self.context_dest, after=self.latest_message_timestamp,limit=limit):
@@ -117,6 +218,14 @@ class Messages():
             layout.bind(minimum_height=layout.setter('height'))
             self.list = layout
 
+        if RNS.vendor.platformutils.is_darwin() or RNS.vendor.platformutils.is_windows():
+            self.hide_widget(self.ids.message_ptt, True)
+        else:
+            if self.ptt_enabled:
+                self.hide_widget(self.ids.message_ptt, False)
+            else:
+                self.hide_widget(self.ids.message_ptt, True)
+
         c_ts = time.time()
         if len(self.new_messages) > 0:
             self.update_widget()
@@ -126,8 +235,10 @@ class Messages():
 
         if self.app.sideband.config["dark_ui"]:
             intensity_msgs = intensity_msgs_dark
+            intensity_play = intensity_play_dark
         else:
             intensity_msgs = intensity_msgs_light
+            intensity_play = intensity_play_light
 
         for w in self.widgets:
             m = w.m
@@ -149,6 +260,13 @@ class Messages():
                     if prg != None:
                         prgstr = ", "+str(round(prg*100, 1))+"% done"
                         if prg <= 0.00:
+                            stamp_cost = self.app.sideband.get_lxm_stamp_cost(msg["hash"])
+                            if stamp_cost:
+                                sphrase = f"Generating stamp with cost {stamp_cost}"
+                                prgstr = ""
+                            else:
+                                sphrase = "Waiting for path"
+                        elif prg <= 0.01:
                             sphrase = "Waiting for path"
                         elif prg <= 0.03:
                             sphrase = "Establishing link"
@@ -160,7 +278,11 @@ class Messages():
                     if msg["title"]:
                         titlestr = "[b]Title[/b] "+msg["title"].decode("utf-8")+"\n"
                     w.heading = titlestr+"[b]Sent[/b] "+txstr+"\n[b]State[/b] "+sphrase+prgstr+"                          "
+                    if w.has_audio:
+                        alstr = RNS.prettysize(w.audio_size)
+                        w.heading += f"\n[b]Audio Message[/b] ({alstr})"
                     m["state"] = msg["state"]
+
 
                 if msg["state"] == LXMF.LXMessage.DELIVERED:
                     w.md_bg_color = msg_color = mdc(color_delivered, intensity_msgs)
@@ -169,6 +291,9 @@ class Messages():
                     if msg["title"]:
                         titlestr = "[b]Title[/b] "+msg["title"].decode("utf-8")+"\n"
                     w.heading = titlestr+"[b]Sent[/b] "+txstr+"\n[b]State[/b] Delivered"
+                    if w.has_audio:
+                        alstr = RNS.prettysize(w.audio_size)
+                        w.heading += f"\n[b]Audio Message[/b] ({alstr})"
                     m["state"] = msg["state"]
 
                 if msg["method"] == LXMF.LXMessage.PAPER:
@@ -187,6 +312,9 @@ class Messages():
                     if msg["title"]:
                         titlestr = "[b]Title[/b] "+msg["title"].decode("utf-8")+"\n"
                     w.heading = titlestr+"[b]Sent[/b] "+txstr+"\n[b]State[/b] On Propagation Net"
+                    if w.has_audio:
+                        alstr = RNS.prettysize(w.audio_size)
+                        w.heading += f"\n[b]Audio Message[/b] ({alstr})"
                     m["state"] = msg["state"]
 
                 if msg["state"] == LXMF.LXMessage.FAILED:
@@ -197,15 +325,29 @@ class Messages():
                         titlestr = "[b]Title[/b] "+msg["title"].decode("utf-8")+"\n"
                     w.heading = titlestr+"[b]Sent[/b] "+txstr+"\n[b]State[/b] Failed"
                     m["state"] = msg["state"]
+                    if w.has_audio:
+                        alstr = RNS.prettysize(w.audio_size)
+                        w.heading += f"\n[b]Audio Message[/b] ({alstr})"
                     w.dmenu.items.append(w.dmenu.retry_item)
 
+
+    def hide_widget(self, wid, dohide=True):
+        if hasattr(wid, 'saved_attrs'):
+            if not dohide:
+                wid.height, wid.size_hint_y, wid.opacity, wid.disabled = wid.saved_attrs
+                del wid.saved_attrs
+        elif dohide:
+            wid.saved_attrs = wid.height, wid.size_hint_y, wid.opacity, wid.disabled
+            wid.height, wid.size_hint_y, wid.opacity, wid.disabled = 0, None, 0, True
 
     def update_widget(self):
         if self.app.sideband.config["dark_ui"]:
             intensity_msgs = intensity_msgs_dark
+            intensity_play = intensity_play_dark
             mt_color = [1.0, 1.0, 1.0, 0.8]
         else:
             intensity_msgs = intensity_msgs_light
+            intensity_play = intensity_play_light
             mt_color = [1.0, 1.0, 1.0, 0.95]
 
         self.ids.message_text.font_name = self.app.input_font
@@ -220,6 +362,10 @@ class Messages():
                 else:
                     message_input = m["content"]
 
+                if message_input.strip() == b"":
+                    if not ("lxm" in m and m["lxm"] != None and m["lxm"].fields != None and LXMF.FIELD_COMMANDS in m["lxm"].fields):
+                        message_input = "[i]This message contains no text content[/i]".encode("utf-8")
+
                 message_markup = multilingual_markup(message_input)
 
                 txstr = time.strftime(ts_format, time.localtime(m["sent"]))
@@ -229,11 +375,15 @@ class Messages():
                 extra_telemetry = {}
                 telemeter = None
                 image_field = None
+                audio_field = None
                 has_image = False
+                has_audio = False
                 attachments_field = None
                 has_attachment = False
                 force_markup = False
                 signature_valid = False
+                stamp_valid = False
+                stamp_value = None
 
                 if "lxm" in m and m["lxm"] != None and m["lxm"].signature_validated:
                     signature_valid = True
@@ -243,6 +393,10 @@ class Messages():
                         telemeter = Telemeter.from_packed(m["extras"]["packed_telemetry"])
                     except Exception as e:
                         pass
+
+                if "extras" in m and m["extras"] != None and "stamp_checked" in m["extras"] and m["extras"]["stamp_checked"] == True:
+                    stamp_valid = m["extras"]["stamp_valid"]
+                    stamp_value = m["extras"]["stamp_value"]
 
                 if "lxm" in m and m["lxm"] != None and m["lxm"].fields != None and LXMF.FIELD_COMMANDS in m["lxm"].fields:
                     try:
@@ -273,6 +427,13 @@ class Messages():
                     try:
                         image_field = m["lxm"].fields[LXMF.FIELD_IMAGE]
                         has_image = True
+                    except Exception as e:
+                        pass
+
+                if "lxm" in m and m["lxm"] and m["lxm"].fields != None and LXMF.FIELD_AUDIO in m["lxm"].fields:
+                    try:
+                        audio_field = m["lxm"].fields[LXMF.FIELD_AUDIO]
+                        has_audio = True
                     except Exception as e:
                         pass
 
@@ -356,6 +517,9 @@ class Messages():
                     heading_str = titlestr
                     if phy_stats_str != "" and self.app.sideband.config["advanced_stats"]:
                         heading_str += phy_stats_str+"\n"
+                    # TODO: Remove
+                    # if stamp_valid:
+                    #     txstr += f" [b]Stamp[/b] value is {stamp_value} "
 
                     heading_str += "[b]Sent[/b] "+txstr
                     heading_str += "\n[b]Received[/b] "+rxstr
@@ -379,14 +543,38 @@ class Messages():
                         heading_str += str(attachment[0])+", "
                     heading_str = heading_str[:-2]
 
+                if has_audio:
+                    alstr = RNS.prettysize(len(audio_field[1]))
+                    heading_str += f"\n[b]Audio Message[/b] ({alstr})"
+
                 item = ListLXMessageCard(
                     text=pre_content+message_markup.decode("utf-8")+extra_content,
                     heading=heading_str,
                     md_bg_color=msg_color,
                 )
+                item.lsource = m["source"]
+                item.has_audio = False
 
                 if has_attachment:
                     item.attachments_field = attachments_field
+
+                if has_audio:
+                    def play_audio(sender):
+                        self.app.play_audio_field(sender.audio_field)
+                        stored_color = sender.md_bg_color
+                        if sender.lsource == self.app.sideband.lxmf_destination.hash:
+                            sender.md_bg_color = mdc(color_delivered, intensity_play)
+                        else:
+                            sender.md_bg_color = mdc(color_received, intensity_play)
+
+                        def cb(dt):
+                            sender.md_bg_color = stored_color
+                        Clock.schedule_once(cb, 0.25)
+
+                    item.has_audio = True
+                    item.audio_size = len(audio_field[1])
+                    item.audio_field = audio_field
+                    item.bind(on_release=play_audio)
 
                 if image_field != None:
                     item.has_image = True
@@ -476,6 +664,15 @@ class Messages():
                         item.dmenu.dismiss()
                         def cb(dt):
                             self.reload()
+                        Clock.schedule_once(cb, 0.2)
+
+                    return x
+
+                def gen_details(mhash, item):
+                    def x():
+                        item.dmenu.dismiss()
+                        def cb(dt):
+                            self.message_details_dialog(mhash)
                         Clock.schedule_once(cb, 0.2)
 
                     return x
@@ -741,6 +938,14 @@ class Messages():
                     "height": dp(40),
                     "on_release": gen_retry(m["hash"], m["content"], item)
                 }
+
+                details_item = {
+                    "viewclass": "OneLineListItem",
+                    "text": "Details",
+                    "height": dp(40),
+                    "on_release": gen_details(m["hash"], item)
+                }
+
                 if m["method"] == LXMF.LXMessage.PAPER:
                     if RNS.vendor.platformutils.is_android():
                         qr_save_text = "Share QR Code"
@@ -825,6 +1030,7 @@ class Messages():
                     else:
                         if telemeter != None:
                             dm_items = [
+                                details_item,
                                 {
                                     "viewclass": "OneLineListItem",
                                     "text": "Copy",
@@ -847,6 +1053,7 @@ class Messages():
 
                         else:
                             dm_items = [
+                                details_item,
                                 {
                                     "viewclass": "OneLineListItem",
                                     "text": "Copy",
@@ -965,7 +1172,27 @@ MDScreen:
                 icon: "key-wireless"
                 text: "Query Network For Keys"
                 on_release: root.app.key_query_action(self)
-            
+
+        BoxLayout:
+            id: message_ptt
+            padding: [dp(16), dp(8), dp(16), dp(8)]
+            spacing: dp(24)
+            size_hint_y: None
+            height: self.minimum_height
+
+            MDRectangleFlatIconButton:
+                id: message_ptt_button
+                icon: "microphone"
+                text: "PTT"
+                size_hint_x: 1.0
+                padding: [dp(10), dp(13), dp(10), dp(14)]
+                icon_size: dp(24)
+                font_size: dp(16)
+                on_press: root.app.message_ptt_down_action(self)
+                on_release: root.app.message_ptt_up_action(self)
+                _no_ripple_effect: True
+                background_normal: ""
+                background_down: ""            
 
         BoxLayout:
             id: message_input_part

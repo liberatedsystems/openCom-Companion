@@ -6,31 +6,32 @@ package.domain = io.unsigned
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,webp,ttf,kv,pyi,typed,so,0,1,2,3,atlas,frag,html,css,js,whl,zip,gz,woff2,pdf,epub,pgm
 source.include_patterns = assets/*,assets/fonts/*,share/*
-source.exclude_patterns = app_storage/*,venv/*,Makefile,./Makefil*,requirements,precompiled/*,parked/*,./setup.py,Makef*,./Makefile,Makefile
+source.exclude_patterns = app_storage/*,venv/*,Makefile,./Makefil*,requirements,precompiled/*,parked/*,./setup.py,Makef*,./Makefile,Makefile,bin/*,build/*,dist/*,__pycache__/*
 
 version.regex = __version__ = ['"](.*)['"]
 version.filename = %(source.dir)s/main.py
-android.numeric_version = 20240522
+android.numeric_version = 20240911
 
-# Cryptography recipe is currently broken, using RNS-internal crypto for now. Since
-# relevant PRs have now been merged in Kivy/P4A, the next release will hopefully allow
-# building a non-ancient PyCa/Cryptography distribution again. When this happens, add
-# the "cryptography" dependency back in here.
-requirements = kivy==2.3.0,libbz2,pillow==10.2.0,qrcode==7.3.1,usb4a,usbserial4a,libwebp,android,able_recipe
+requirements = kivy==2.3.0,libbz2,pillow==10.2.0,qrcode==7.3.1,usb4a,usbserial4a,libwebp,libogg,libopus,opusfile,numpy,cryptography,ffpyplayer,codec2,pycodec2,sh,pynacl,android,able_recipe
 
-p4a.local_recipes = ../Others/python-for-android/pythonforandroid/recipes
+android.gradle_dependencies =  com.android.support:support-compat:28.0.0
+#android.enable_androidx = True
+#android.add_aars = patches/support-compat-28.0.0.aar
+
+p4a.local_recipes = ../recipes/
 
 icon.filename = %(source.dir)s/assets/icon.png
 presplash.filename = %(source.dir)s/assets/presplash_small.png
 android.presplash_color = #00000000
 
-# TODO: Fix
+# TODO: Fix inability to set "user" orientation from spec
+# This is currently handled by patching the APK manifest
 orientation = portrait
 fullscreen = 0
 
-android.permissions = INTERNET,POST_NOTIFICATIONS,WAKE_LOCK,FOREGROUND_SERVICE,CHANGE_WIFI_MULTICAST_STATE,BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_SCAN, BLUETOOTH_CONNECT, BLUETOOTH_ADVERTISE,ACCESS_NETWORK_STATE,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,MANAGE_EXTERNAL_STORAGE,ACCESS_BACKGROUND_LOCATION
+android.permissions = INTERNET,POST_NOTIFICATIONS,WAKE_LOCK,FOREGROUND_SERVICE,CHANGE_WIFI_MULTICAST_STATE,BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_SCAN, BLUETOOTH_CONNECT, BLUETOOTH_ADVERTISE,ACCESS_NETWORK_STATE,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,MANAGE_EXTERNAL_STORAGE,ACCESS_BACKGROUND_LOCATION,RECORD_AUDIO
 
-android.api = 30
+android.api = 31
 android.minapi = 24
 android.ndk = 25b
 android.skip_update = False
@@ -44,7 +45,9 @@ android.add_gradle_repositories = flatDir { dirs("../../../../../../patches") }
 services = sidebandservice:services/sidebandservice.py:foreground
 android.whitelist = lib-dynload/termios.so
 android.manifest.intent_filters = patches/intent-filter.xml
-android.add_aars = patches/support-compat-28.0.0.aar
+
+# android.add_libs_armeabi_v7a = ../libs/armeabi/*.so*
+# android.add_libs_arm64_v8a = ../libs/arm64/*.so*
 
 [buildozer]
 log_level = 2
