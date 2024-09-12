@@ -342,7 +342,12 @@ class SidebandService():
 
             if self.sideband.interface_rnode != None:
                 if self.sideband.interface_rnode.online:
-                    rs = "On-air at "+str(self.sideband.interface_rnode.bitrate_kbps)+" Kbps"
+                    if self.sideband.interface_rnode is RNS.Interfaces.Android.RNodeMultiInterface.RNodeMultiInterface:
+                        rs = ""
+                        for subinterface in self.sideband.interface_rnode.subinterfaces:
+                            rs += "On-air at "+str(subinterface.bitrate_kbps)+" Kbps \n" # \todo does this work?
+                    else:
+                        rs = "On-air at "+str(self.sideband.interface_rnode.bitrate_kbps)+" Kbps"
                 else:
                     rs = "Interface Down"
 

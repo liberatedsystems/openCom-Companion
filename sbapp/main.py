@@ -2843,40 +2843,169 @@ class SidebandApp(MDApp):
 
     def hardware_rnode_save(self):
         try:
-            self.sideband.config["hw_rnode_frequency"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_frequency.text)*1000000)
+            self.sideband.config["hw_rnode_preset"] = self.hardware_rnode_screen.ids.hardware_rnode_preset.text
         except:
             pass
 
         try:
-            self.sideband.config["hw_rnode_bandwidth"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text)*1000)
+            self.sideband.config["hw_rnode_channel"] = self.hardware_rnode_screen.ids.hardware_rnode_channel.text
         except:
             pass
 
         try:
-            self.sideband.config["hw_rnode_tx_power"] = int(self.hardware_rnode_screen.ids.hardware_rnode_txpower.text)
+            self.sideband.config["hw_rnode_advanced_cfg"] = bool(self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg.active)
+        except:
+            pass
+
+        if self.sideband.config["hw_rnode_advanced_cfg"]:
+            try:
+                self.sideband.config["hw_rnode_frequency"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_frequency.text)*1000000)
+            except:
+                pass
+
+            try:
+                self.sideband.config["hw_rnode_bandwidth"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text)*1000)
+            except:
+                pass
+
+            try:
+                self.sideband.config["hw_rnode_tx_power"] = int(self.hardware_rnode_screen.ids.hardware_rnode_txpower.text)
+            except:
+                pass
+
+            try:
+                self.sideband.config["hw_rnode_spreading_factor"] = int(self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.text)
+            except:
+                pass
+            
+            try:
+                self.sideband.config["hw_rnode_coding_rate"] = int(self.hardware_rnode_screen.ids.hardware_rnode_codingrate.text)
+            except:
+                pass
+            
+            try:
+                self.sideband.config["hw_rnode_atl_short"] = float(self.hardware_rnode_screen.ids.hardware_rnode_atl_short.text)
+            except:
+                self.sideband.config["hw_rnode_atl_short"] = None
+
+            try:
+                self.sideband.config["hw_rnode_atl_long"] = float(self.hardware_rnode_screen.ids.hardware_rnode_atl_long.text)
+            except:
+                self.sideband.config["hw_rnode_atl_long"] = None
+        else:
+            try:
+                if self.sideband.config["hw_rnode_preset"] in self.sideband.config["hw_rnode_presets"]:
+                    index = self.sideband.config["hw_rnode_presets"].index(self.sideband.config["hw_rnode_preset"])
+
+                    self.sideband.config["hw_rnode_bandwidth"] = self.sideband.config["hw_rnode_presets_cfg"][index][0]
+                    self.sideband.config["hw_rnode_spreading_factor"] = self.sideband.config["hw_rnode_presets_cfg"][index][1]
+                    self.sideband.config["hw_rnode_coding_rate"] = self.sideband.config["hw_rnode_presets_cfg"][index][2]
+
+                    if self.sideband.config["hw_rnode_presets_cfg"][index][3] != 100:
+                        self.sideband.config["hw_rnode_atl_short"] = self.sideband.config["hw_rnode_presets_cfg"][index][3]
+                    else:
+                        self.sideband.config["hw_rnode_atl_short"] = None
+
+                    if self.sideband.config["hw_rnode_presets_cfg"][index][4] != 100:
+                        self.sideband.config["hw_rnode_atl_long"] = self.sideband.config["hw_rnode_presets_cfg"][index][4]
+                    else:
+                        self.sideband.config["hw_rnode_atl_long"] = None
+
+            except Exception as e:
+                RNS.log("Error while configuring preset parameters: "+str(e), RNS.LOG_ERROR)
+
+            # Temporary until dropdown for frequencies added
+            try:
+                self.sideband.config["hw_rnode_frequency"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_frequency.text)*1000000)
+            except:
+                pass
+            try:
+                self.sideband.config["hw_rnode_tx_power"] = int(self.hardware_rnode_screen.ids.hardware_rnode_txpower.text)
+            except:
+                pass
+
+        try:
+            self.sideband.config["hw_rnode_sec_preset"] = self.hardware_rnode_screen.ids.hardware_rnode_sec_preset.text
         except:
             pass
 
         try:
-            self.sideband.config["hw_rnode_spreading_factor"] = int(self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.text)
+            self.sideband.config["hw_rnode_sec_channel"] = self.hardware_rnode_screen.ids.hardware_rnode_sec_channel.text
         except:
             pass
-        
-        try:
-            self.sideband.config["hw_rnode_coding_rate"] = int(self.hardware_rnode_screen.ids.hardware_rnode_codingrate.text)
-        except:
-            pass
-        
-        try:
-            self.sideband.config["hw_rnode_atl_short"] = float(self.hardware_rnode_screen.ids.hardware_rnode_atl_short.text)
-        except:
-            self.sideband.config["hw_rnode_atl_short"] = None
 
         try:
-            self.sideband.config["hw_rnode_atl_long"] = float(self.hardware_rnode_screen.ids.hardware_rnode_atl_long.text)
+            self.sideband.config["hw_rnode_secondary_modem"] = bool(self.hardware_rnode_screen.ids.hardware_rnode_secondary_modem.active)
         except:
-            self.sideband.config["hw_rnode_atl_long"] = None
-        
+            pass
+
+        if self.sideband.config["hw_rnode_secondary_modem"]:
+            if self.sideband.config["hw_rnode_sec_advanced_cfg"]:
+                try:
+                    self.sideband.config["hw_rnode_sec_frequency"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency.text)*1000000)
+                except:
+                    pass
+
+                try:
+                    self.sideband.config["hw_rnode_sec_bandwidth"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth.text)*1000)
+                except:
+                    pass
+
+                try:
+                    self.sideband.config["hw_rnode_sec_tx_power"] = int(self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower.text)
+                except:
+                    pass
+
+                try:
+                    self.sideband.config["hw_rnode_sec_spreading_factor"] = int(self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor.text)
+                except:
+                    pass
+
+                try:
+                    self.sideband.config["hw_rnode_sec_coding_rate"] = int(self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate.text)
+                except:
+                    pass
+
+                try:
+                    self.sideband.config["hw_rnode_sec_atl_short"] = float(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short.text)
+                except:
+                    self.sideband.config["hw_rnode_sec_atl_short"] = None
+                try:
+                    self.sideband.config["hw_rnode_sec_atl_long"] = float(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long.text)
+                except:
+                    self.sideband.config["hw_rnode_sec_atl_long"] = None
+            else:
+                try:
+                    if self.sideband.config["hw_rnode_sec_preset"] in self.sideband.config["hw_rnode_presets"]:
+                        index = self.sideband.config["hw_rnode_sec_presets"].index(self.sideband.config["hw_rnode_preset"])
+
+                        self.sideband.config["hw_rnode_sec_bandwidth"] = self.sideband.config["hw_rnode_presets_cfg"][index][0]
+                        self.sideband.config["hw_rnode_sec_spreading_factor"] = self.sideband.config["hw_rnode_presets_cfg"][index][1]
+                        self.sideband.config["hw_rnode_sec_coding_rate"] = self.sideband.config["hw_rnode_presets_cfg"][index][2]
+
+                        if self.sideband.config["hw_rnode_sec_presets_cfg"][index][3] != 100:
+                            self.sideband.config["hw_rnode_sec_atl_short"] = self.sideband.config["hw_rnode_presets_cfg"][index][3]
+                        else:
+                            self.sideband.config["hw_rnode_sec_atl_short"] = None
+
+                        if self.sideband.config["hw_rnode_sec_presets_cfg"][index][4] != 100:
+                            self.sideband.config["hw_rnode_sec_atl_long"] = self.sideband.config["hw_rnode_presets_cfg"][index][4]
+                        else:
+                            self.sideband.config["hw_rnode_sec_atl_long"] = None
+
+                except Exception as e:
+                    RNS.log("Error while configuring secondary modem preset parameters: "+str(e), RNS.LOG_ERROR)
+
+                # Temporary until dropdown for frequencies added
+                try:
+                    self.sideband.config["hw_rnode_sec_frequency"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency.text)*1000000)
+                except:
+                    pass
+                try:
+                    self.sideband.config["hw_rnode_sec_tx_power"] = int(self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower.text)
+                except:
+                    pass
+
         if self.hardware_rnode_screen.ids.hardware_rnode_beaconinterval.text == "":
             self.sideband.config["hw_rnode_beaconinterval"] = None
         else:
@@ -2939,6 +3068,206 @@ class SidebandApp(MDApp):
         threading.Thread(target=re_enable, daemon=True).start()
         self.sideband.setstate("wants.bt_pair", True)
 
+    def hardware_rnode_channel_set(self, caller):
+        if caller == self.hardware_rnode_screen.ids.hardware_rnode_channel_dec:
+            self.sideband.config["hw_rnode_channel_index"] -= 1
+            if self.sideband.config["hw_rnode_channel_index"] < 0:
+                self.sideband.config["hw_rnode_channel_index"] = 0
+            channel = list(self.sideband.config["hw_rnode_channels"].keys())[self.sideband.config["hw_rnode_channel_index"]]
+            primary_modem = True
+        elif caller == self.hardware_rnode_screen.ids.hardware_rnode_channel_inc:
+            self.sideband.config["hw_rnode_channel_index"] += 1
+            if self.sideband.config["hw_rnode_channel_index"] >= len(self.sideband.config["hw_rnode_channels"].keys()):
+                self.sideband.config["hw_rnode_channel_index"] = len(self.sideband.config["hw_rnode_channels"].keys()) - 1
+            channel = list(self.sideband.config["hw_rnode_channels"].keys())[self.sideband.config["hw_rnode_channel_index"]]
+            primary_modem = True
+
+        elif caller == self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_dec:
+            self.sideband.config["hw_rnode_sec_channel_index"] -= 1
+            if self.sideband.config["hw_rnode_sec_channel_index"] < 0:
+                self.sideband.config["hw_rnode_sec_channel_index"] = 0
+            channel = list(self.sideband.config["hw_rnode_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
+            primary_modem = False
+
+        elif caller == self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_inc:
+            self.sideband.config["hw_rnode_sec_channel_index"] += 1
+            if self.sideband.config["hw_rnode_sec_channel_index"] >= len(self.sideband.config["hw_rnode_sec_channels"].keys()):
+                self.sideband.config["hw_rnode_sec_channel_index"] = len(self.sideband.config["hw_rnode_sec_channels"].keys()) - 1
+            channel = list(self.sideband.config["hw_rnode_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
+            primary_modem = False
+
+        RNS.log("Setting channel to: " + channel,RNS.LOG_DEBUG)
+
+        if primary_modem:
+            self.hardware_rnode_screen.ids.hardware_rnode_channel.text = channel
+            if self.sideband.config["hw_rnode_channel_index"] == 4:
+                # Change bandwidth on channel 5 to 250kHz due to le epic ofcom regulation
+                self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text = str(250000 / 1000)
+        else:
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_channel.text = channel
+
+
+        self.hardware_rnode_load_channel(channel, primary_modem)
+        if self.hardware_rnode_validate():
+            self.hardware_rnode_save()
+
+    def hardware_rnode_load_channel(self, channel, primary_modem):
+        if primary_modem:
+            self.hardware_rnode_screen.ids.hardware_rnode_frequency.text = str(self.sideband.config["hw_rnode_channels"][channel])
+        else:
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency.text = str(self.sideband.config["hw_rnode_sec_channels"][channel])
+
+
+    def hardware_rnode_preset_set(self, caller):
+        if caller == self.hardware_rnode_screen.ids.hardware_rnode_preset_prev:
+            self.sideband.config["hw_rnode_preset_index"] -= 1
+            if self.sideband.config["hw_rnode_preset_index"] < 0:
+                self.sideband.config["hw_rnode_preset_index"] = 0
+            preset = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_preset_index"]]
+            primary_modem = True
+
+        elif caller == self.hardware_rnode_screen.ids.hardware_rnode_preset_next:
+            self.sideband.config.hw_rnode_preset_index += 1
+            if self.sideband.config["hw_rnode_preset_index"] >= len(self.sideband.config["hw_rnode_channels"].keys()):
+                self.sideband.config["hw_rnode_preset_index"] = len(self.sideband.config["hw_rnode_channels"].keys()) - 1
+            preset = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_preset_index"]]
+            primary_modem = True
+
+        elif caller == self.hardware_rnode_screen.ids.hardware_rnode_sec_preset_prev:
+            self.sideband.config["hw_rnode_sec_preset_index"] -= 1
+            if self.sideband.config["hw_rnode_sec_preset_index"] < 0:
+                self.sideband.config["hw_rnode_sec_preset_index"] = 0
+            preset = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_sec_preset_index"]]
+            primary_modem = False
+
+        elif caller == self.hardware_rnode_screen.ids.hardware_rnode_sec_preset_next:
+            self.sideband.config["hw_rnode_sec_preset_index"] += 1
+            if self.sideband.config["hw_rnode_sec_preset_index"] >= len(self.sideband.config["hw_rnode_sec_channels"].keys()):
+                self.sideband.config["hw_rnode_sec_preset_index"] = len(self.sideband.config["hw_rnode_sec_channels"].keys()) - 1
+            preset = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_sec_preset_index"]]
+            primary_modem = False
+
+        RNS.log("Setting preset to: " + preset,RNS.LOG_DEBUG)
+
+        if primary_modem:
+            self.hardware_rnode_screen.ids.hardware_rnode_preset.text = preset
+        else:
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_preset.text = preset
+
+        self.hardware_rnode_load_preset(preset, primary_modem)
+        if self.hardware_rnode_validate():
+            self.hardware_rnode_save()
+
+    def hardware_rnode_load_preset(self, preset, primary_modem):
+        if primary_modem:
+            if preset in self.sideband.config["hw_rnode_presets"]:
+                index = self.sideband.config["hw_rnode_presets"].index(preset)
+
+                # Only edit if channel 5 not selected
+                if self.sideband.config["hw_rnode_channel_index"] != 4:
+                    self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text = str(self.sideband.config["hw_rnode_presets_cfg"][index][0] / 1000)
+                self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.text = str(self.sideband.config["hw_rnode_presets_cfg"][index][1])
+                self.hardware_rnode_screen.ids.hardware_rnode_codingrate.text = str(self.sideband.config["hw_rnode_presets_cfg"][index][2])
+
+                if self.sideband.config["hw_rnode_presets_cfg"][index][3] != 100:
+                    self.hardware_rnode_screen.ids.hardware_rnode_atl_short.text = str(self.sideband.config["hw_rnode_presets_cfg"][index][3])
+
+                if self.sideband.config["hw_rnode_presets_cfg"][index][4] != 100:
+                    self.hardware_rnode_screen.ids.hardware_rnode_atl_long.text = str(self.sideband.config["hw_rnode_presets_cfg"][index][4])
+        else:
+            if preset in self.sideband.config["hw_rnode_presets"]:
+                index = self.sideband.config["hw_rnode_presets"].index(preset)
+
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth.text = str(self.sideband.config["hw_rnode_sec_presets_cfg"][index][0] / 1000)
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor.text = str(self.sideband.config["hw_rnode_sec_presets_cfg"][index][1])
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate.text = str(self.sideband.config["hw_rnode_sec_presets_cfg"][index][2])
+
+                if self.sideband.config["hw_rnode_sec_presets_cfg"][index][3] != 100:
+                    self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short.text = str(self.sideband.config["hw_rnode_sec_presets_cfg"][index][3])
+
+                if self.sideband.config["hw_rnode_sec_presets_cfg"][index][4] != 100:
+                    self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long.text = str(self.sideband.config["hw_rnode_sec_presets_cfg"][index][4])
+
+    def hardware_rnode_advanced_cfg_toggle_action(self, sender=None, event=None):
+        if sender.active:
+            self.sideband.config["hw_rnode_advanced_cfg"] = True
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_frequency,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_bandwidth,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_txpower,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_codingrate,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_airtime_label,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_atl_short,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_atl_long,False)
+        else:
+            self.sideband.config["hw_rnode_advanced_cfg"] = False
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_frequency,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_bandwidth,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_txpower,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_codingrate,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_airtime_label,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_atl_short,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_atl_long,True)
+
+        self.sideband.save_configuration()
+
+    def hardware_rnode_sec_advanced_cfg_toggle_action(self, sender=None, event=None):
+        if sender.active:
+            self.sideband.config["hw_rnode_sec_advanced_cfg"] = True
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_airtime_label,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long,False)
+        else:
+            self.sideband.config["hw_rnode_sec_advanced_cfg"] = False
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_airtime_label,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long,True)
+
+        self.sideband.save_configuration()
+
+    def hardware_rnode_secondary_modem_toggle_action(self, sender=None, event=None):
+        if sender.active:
+            self.sideband.config["hw_rnode_secondary_modem"] = True
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_dec,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_inc,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset_prev,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset_next,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg,False)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg_label,False)
+        else:
+            self.sideband.config["hw_rnode_secondary_modem"] = False
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_dec,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_inc,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset_prev,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset_next,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg_label,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long,True)
+            self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_airtime_label,True)
+
+        self.sideband.save_configuration()
+
     def hardware_rnode_bt_toggle_action(self, sender=None, event=None):
         if sender.active:
             self.sideband.config["hw_rnode_bluetooth"] = True
@@ -2973,6 +3302,10 @@ class SidebandApp(MDApp):
                     if not sender.focus:
                         save_connectivity(sender=sender)
 
+            t_channel = self.sideband.config["hw_rnode_channel"]
+
+            t_preset = self.sideband.config["hw_rnode_preset"]
+
             if self.sideband.config["hw_rnode_frequency"] != None:
                 t_freq = str(self.sideband.config["hw_rnode_frequency"]/1000000.0)
             else:
@@ -2993,6 +3326,48 @@ class SidebandApp(MDApp):
                 t_cr = str(self.sideband.config["hw_rnode_coding_rate"])
             else:
                 t_cr = str(6)
+            if self.sideband.config["hw_rnode_atl_short"] != None:
+                t_ats = str(self.sideband.config["hw_rnode_atl_short"])
+            else:
+                t_ats = ""
+            if self.sideband.config["hw_rnode_atl_long"] != None:
+                t_atl = str(self.sideband.config["hw_rnode_atl_long"])
+            else:
+                t_atl = ""
+
+            t_sec_channel = self.sideband.config["hw_rnode_sec_channel"]
+
+            t_sec_preset = self.sideband.config["hw_rnode_sec_preset"]
+
+            if self.sideband.config["hw_rnode_sec_frequency"] != None:
+                t_sec_freq = str(self.sideband.config["hw_rnode_sec_frequency"]/1000000.0)
+            else:
+                t_sec_freq = ""
+            if self.sideband.config["hw_rnode_sec_bandwidth"] != None:
+                t_sec_bw = str(self.sideband.config["hw_rnode_sec_bandwidth"]/1000.0)
+            else:
+                t_sec_bw = str(62.5)
+            if self.sideband.config["hw_rnode_sec_tx_power"] != None:
+                t_sec_p = str(self.sideband.config["hw_rnode_sec_tx_power"])
+            else:
+                t_sec_p = str(0)
+            if self.sideband.config["hw_rnode_sec_spreading_factor"] != None:
+                t_sec_sf = str(self.sideband.config["hw_rnode_sec_spreading_factor"])
+            else:
+                t_sec_sf = str(8)
+            if self.sideband.config["hw_rnode_sec_coding_rate"] != None:
+                t_sec_cr = str(self.sideband.config["hw_rnode_sec_coding_rate"])
+            else:
+                t_sec_cr = str(6)
+            if self.sideband.config["hw_rnode_sec_atl_short"] != None:
+                t_sec_ats = str(self.sideband.config["hw_rnode_sec_atl_short"])
+            else:
+                t_sec_ats = ""
+            if self.sideband.config["hw_rnode_sec_atl_long"] != None:
+                t_sec_atl = str(self.sideband.config["hw_rnode_sec_atl_long"])
+            else:
+                t_sec_atl = ""
+
             if self.sideband.config["hw_rnode_beaconinterval"] != None:
                 t_bi = str(self.sideband.config["hw_rnode_beaconinterval"])
             else:
@@ -3005,46 +3380,112 @@ class SidebandApp(MDApp):
                 t_btd = str(self.sideband.config["hw_rnode_bt_device"])
             else:
                 t_btd = ""
-            if self.sideband.config["hw_rnode_atl_short"] != None:
-                t_ats = str(self.sideband.config["hw_rnode_atl_short"])
-            else:
-                t_ats = ""
-            if self.sideband.config["hw_rnode_atl_long"] != None:
-                t_atl = str(self.sideband.config["hw_rnode_atl_long"])
-            else:
-                t_atl = ""
 
             self.hardware_rnode_screen.ids.hardware_rnode_bluetooth.active = self.sideband.config["hw_rnode_bluetooth"]
             self.hardware_rnode_screen.ids.hardware_rnode_framebuffer.active = self.sideband.config["hw_rnode_enable_framebuffer"]
+
+            self.hardware_rnode_screen.ids.hardware_rnode_advanced_cfg.active = self.sideband.config["hw_rnode_advanced_cfg"]
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg.active = self.sideband.config["hw_rnode_sec_advanced_cfg"]
+
+            self.hardware_rnode_screen.ids.hardware_rnode_secondary_modem.active = self.sideband.config["hw_rnode_secondary_modem"]
+
+            self.hardware_rnode_screen.ids.hardware_rnode_channel.text = t_channel
+            self.hardware_rnode_screen.ids.hardware_rnode_preset.text = t_preset
             self.hardware_rnode_screen.ids.hardware_rnode_frequency.text = t_freq
             self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text = t_bw
             self.hardware_rnode_screen.ids.hardware_rnode_txpower.text = t_p
             self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.text = t_sf
             self.hardware_rnode_screen.ids.hardware_rnode_codingrate.text = t_cr
+            self.hardware_rnode_screen.ids.hardware_rnode_atl_short.text = t_ats
+            self.hardware_rnode_screen.ids.hardware_rnode_atl_long.text = t_atl
+
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_channel.text = t_sec_channel
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_preset.text = t_sec_preset
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency.text = t_sec_freq
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth.text = t_sec_bw
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower.text = t_sec_p
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor.text = t_sec_sf
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate.text = t_sec_cr
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short.text = t_sec_ats
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long.text = t_sec_atl
+
             self.hardware_rnode_screen.ids.hardware_rnode_beaconinterval.text = t_bi
             self.hardware_rnode_screen.ids.hardware_rnode_beacondata.text = t_bd
             self.hardware_rnode_screen.ids.hardware_rnode_bt_device.text = t_btd
-            self.hardware_rnode_screen.ids.hardware_rnode_atl_short.text = t_ats
-            self.hardware_rnode_screen.ids.hardware_rnode_atl_long.text = t_atl
+
             self.hardware_rnode_screen.ids.hardware_rnode_frequency.bind(focus=focus_save)
             self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.bind(focus=focus_save)
             self.hardware_rnode_screen.ids.hardware_rnode_txpower.bind(focus=focus_save)
             self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.bind(focus=focus_save)
             self.hardware_rnode_screen.ids.hardware_rnode_codingrate.bind(focus=focus_save)
+
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency.bind(focus=focus_save)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth.bind(focus=focus_save)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower.bind(focus=focus_save)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor.bind(focus=focus_save)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate.bind(focus=focus_save)
+
             self.hardware_rnode_screen.ids.hardware_rnode_beaconinterval.bind(focus=focus_save)
             self.hardware_rnode_screen.ids.hardware_rnode_beacondata.bind(focus=focus_save)
             self.hardware_rnode_screen.ids.hardware_rnode_bt_device.bind(focus=focus_save)
+
             self.hardware_rnode_screen.ids.hardware_rnode_frequency.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_txpower.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_codingrate.bind(on_text_validate=save_connectivity)
-            self.hardware_rnode_screen.ids.hardware_rnode_beaconinterval.bind(on_text_validate=save_connectivity)
-            self.hardware_rnode_screen.ids.hardware_rnode_beacondata.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_atl_short.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_atl_long.bind(on_text_validate=save_connectivity)
+
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency.bind(on_text_validate=save_connectivity)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth.bind(on_text_validate=save_connectivity)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower.bind(on_text_validate=save_connectivity)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor.bind(on_text_validate=save_connectivity)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate.bind(on_text_validate=save_connectivity)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short.bind(on_text_validate=save_connectivity)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long.bind(on_text_validate=save_connectivity)
+
+            self.hardware_rnode_screen.ids.hardware_rnode_beaconinterval.bind(on_text_validate=save_connectivity)
+            self.hardware_rnode_screen.ids.hardware_rnode_beacondata.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_bluetooth.bind(active=self.hardware_rnode_bt_toggle_action)
             self.hardware_rnode_screen.ids.hardware_rnode_framebuffer.bind(active=self.hardware_rnode_framebuffer_toggle_action)
+
+            self.hardware_rnode_screen.ids.hardware_rnode_advanced_cfg.bind(active=self.hardware_rnode_advanced_cfg_toggle_action)
+            self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg.bind(active=self.hardware_rnode_sec_advanced_cfg_toggle_action)
+
+            self.hardware_rnode_screen.ids.hardware_rnode_secondary_modem.bind(active=self.hardware_rnode_secondary_modem_toggle_action)
+
+            # Hide secondary modem options by default
+            if (not self.sideband.config["hw_rnode_secondary_modem"]):
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset_prev,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset_next,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_dec,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_inc,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg_label,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg,True)
+
+            # Hide advanced options by default
+            if (not self.sideband.config["hw_rnode_advanced_cfg"]):
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_frequency,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_bandwidth,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_txpower,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_codingrate,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_atl_short,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_atl_long,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_airtime_label,True)
+
+            if (not self.sideband.config["hw_rnode_sec_advanced_cfg"]):
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long,True)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_airtime_label,True)
 
             self.hardware_rnode_ready = True
 
@@ -3061,7 +3502,7 @@ class SidebandApp(MDApp):
             valid = False
         
         try:
-            valid_vals = [7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, 500]
+            valid_vals = [7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 203.125, 250, 406.25, 500, 812.5, 1625]
             val = float(self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text)
             if not val in valid_vals:
                 raise ValueError("Invalid bandwidth")
@@ -3083,7 +3524,7 @@ class SidebandApp(MDApp):
         
         try:
             val = int(self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.text)
-            if val < 7 or val > 12:
+            if val < 5 or val > 12:
                 raise ValueError("Invalid sf")
             self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.error = False
             self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.text = str(val)

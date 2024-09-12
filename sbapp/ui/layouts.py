@@ -2106,8 +2106,69 @@ MDScreen:
                         on_release: root.app.hardware_rnode_import(self)
 
                 MDLabel:
-                    text: "Radio Options"
+                    text: "Primary Modem"
                     font_style: "H6"
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDRaisedButton:
+                        id: hardware_rnode_channel_dec
+                        text: "-"
+                        pos_hint: {"center_x": .5, "center_y": .5}
+                        on_release: root.app.hardware_rnode_channel_set(self)
+
+                    MDRectangleFlatButton:
+                        id: hardware_rnode_channel
+                        text: "No channel selected"
+                        pos_hint: {"center_x": .5, "center_y": .5}
+
+                    MDRaisedButton:
+                        id: hardware_rnode_channel_inc
+                        text: "+"
+                        pos_hint: {"center_x": .5, "center_y": .5}
+                        on_release: root.app.hardware_rnode_channel_set(self)
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+
+                    MDRaisedButton:
+                        id: hardware_rnode_preset_prev
+                        text: "Prev"
+                        #pos_hint: {"center_x": .5, "center_y": .5}
+                        on_release: root.app.hardware_rnode_preset_set(self)
+
+                    MDRectangleFlatButton:
+                        id: hardware_rnode_preset
+                        text: "No preset selected"
+                        #pos_hint: {"center_x": .5, "center_y": .5}
+
+                    MDRaisedButton:
+                        id: hardware_rnode_preset_next
+                        text: "Next"
+                        #pos_hint: {"center_x": .5, "center_y": .5}
+                        on_release: root.app.hardware_rnode_preset_set(self)
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
+                        text: "Advanced Configuration"
+                        font_style: "Subtitle1"
+
+                    MDSwitch:
+                        id: hardware_rnode_advanced_cfg
+                        pos_hint: {"center_y": 0.3}
+                        active: False
 
                 # MDTextField:
                 #     id: hardware_rnode_modulation
@@ -2161,27 +2222,10 @@ MDScreen:
                         font_size: dp(24)
 
                 MDLabel:
-                    text: "Optional Settings"
-                    font_style: "H6"
+                    text: "Airtime Settings"
+                    font_style: "Subtitle1"
+                    id: hardware_rnode_airtime_label
 
-                MDBoxLayout:
-                    orientation: "horizontal"
-                    spacing: "24dp"
-                    size_hint_y: None
-                    height: self.minimum_height
-                    # padding: [dp(0), dp(0), dp(0), dp(35)]
-
-                    MDTextField:
-                        id: hardware_rnode_beaconinterval
-                        hint_text: "Beacon Interval (seconds)"
-                        text: ""
-                        font_size: dp(24)
-
-                    MDTextField:
-                        id: hardware_rnode_beacondata
-                        hint_text: "Beacon Data"
-                        text: ""
-                        font_size: dp(24)
 
                 MDBoxLayout:
                     orientation: "horizontal"
@@ -2199,6 +2243,174 @@ MDScreen:
                     MDTextField:
                         id: hardware_rnode_atl_long
                         hint_text: "Airime Limit % (1h)"
+                        text: ""
+                        font_size: dp(24)
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+
+                    MDLabel:
+                        text: "Configure Secondary Modem"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: hardware_rnode_secondary_modem
+                        pos_hint: {"center_y": 0.3}
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDRaisedButton:
+                        id: hardware_rnode_sec_channel_dec
+                        text: "-"
+                        pos_hint: {"center_x": .5, "center_y": .5}
+                        on_release: root.app.hardware_rnode_channel_set(self)
+
+                    MDRectangleFlatButton:
+                        id: hardware_rnode_sec_channel
+                        text: "No channel selected"
+                        pos_hint: {"center_x": .5, "center_y": .5}
+
+                    MDRaisedButton:
+                        id: hardware_rnode_sec_channel_inc
+                        text: "+"
+                        pos_hint: {"center_x": .5, "center_y": .5}
+                        on_release: root.app.hardware_rnode_channel_set(self)
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDRaisedButton:
+                        id: hardware_rnode_sec_preset_prev
+                        text: "Prev"
+                        #pos_hint: {"center_x": .5, "center_y": .5}
+                        on_release: root.app.hardware_rnode_preset_set(self)
+
+                    MDRectangleFlatButton:
+                        id: hardware_rnode_sec_preset
+                        text: "No preset selected"
+                        #pos_hint: {"center_x": .5, "center_y": .5}
+
+                    MDRaisedButton:
+                        id: hardware_rnode_sec_preset_next
+                        text: "Next"
+                        #pos_hint: {"center_x": .5, "center_y": .5}
+                        on_release: root.app.hardware_rnode_preset_set(self)
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+
+                    MDLabel:
+                        text: "Advanced Configuration"
+                        font_style: "Subtitle1"
+                        id: hardware_rnode_sec_advanced_cfg_label
+
+                    MDSwitch:
+                        id: hardware_rnode_sec_advanced_cfg
+                        pos_hint: {"center_y": 0.3}
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    spacing: "24dp"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    # padding: [dp(0), dp(0), dp(0), dp(35)]
+
+                    MDTextField:
+                        id: hardware_rnode_sec_frequency
+                        hint_text: "Frequency (MHz)"
+                        text: ""
+                        font_size: dp(24)
+
+                    MDTextField:
+                        id: hardware_rnode_sec_bandwidth
+                        hint_text: "Bandwidth (KHz)"
+                        text: ""
+                        font_size: dp(24)
+
+                    MDTextField:
+                        id: hardware_rnode_sec_txpower
+                        hint_text: "TX Power (dBm)"
+                        text: ""
+                        font_size: dp(24)
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    spacing: "24dp"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    padding: [dp(0), dp(0), dp(0), dp(24)]
+
+                    MDTextField:
+                        id: hardware_rnode_sec_spreadingfactor
+                        hint_text: "Spreading Factor"
+                        text: ""
+                        font_size: dp(24)
+
+                    MDTextField:
+                        id: hardware_rnode_sec_codingrate
+                        hint_text: "Coding Rate"
+                        text: ""
+                        font_size: dp(24)
+
+                MDLabel:
+                    text: "Airtime Settings"
+                    font_style: "Subtitle1"
+                    id: hardware_rnode_sec_airtime_label
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    spacing: "24dp"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    # padding: [dp(0), dp(0), dp(0), dp(35)]
+
+                    MDTextField:
+                        id: hardware_rnode_sec_atl_short
+                        hint_text: "Airime Limit % (15s)"
+                        text: ""
+                        font_size: dp(24)
+
+                    MDTextField:
+                        id: hardware_rnode_sec_atl_long
+                        hint_text: "Airime Limit % (1h)"
+                        text: ""
+                        font_size: dp(24)
+
+                MDLabel:
+                    text: "Beacon Settings"
+                    font_style: "Subtitle1"
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    spacing: "24dp"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    # padding: [dp(0), dp(0), dp(0), dp(35)]
+
+                    MDTextField:
+                        id: hardware_rnode_beaconinterval
+                        hint_text: "Beacon Interval (seconds)"
+                        text: ""
+                        font_size: dp(24)
+
+                    MDTextField:
+                        id: hardware_rnode_beacondata
+                        hint_text: "Beacon Data"
                         text: ""
                         font_size: dp(24)
 

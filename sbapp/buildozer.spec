@@ -16,7 +16,7 @@ android.numeric_version = 20240522
 # relevant PRs have now been merged in Kivy/P4A, the next release will hopefully allow
 # building a non-ancient PyCa/Cryptography distribution again. When this happens, add
 # the "cryptography" dependency back in here.
-requirements = kivy==2.3.0,libbz2,pillow==10.2.0,qrcode==7.3.1,usb4a,usbserial4a,libwebp
+requirements = kivy==2.3.0,libbz2,pillow==10.2.0,qrcode==7.3.1,usb4a,usbserial4a,libwebp,android,able_recipe
 
 p4a.local_recipes = ../Others/python-for-android/pythonforandroid/recipes
 
@@ -28,7 +28,7 @@ android.presplash_color = #00000000
 orientation = portrait
 fullscreen = 0
 
-android.permissions = INTERNET,POST_NOTIFICATIONS,WAKE_LOCK,FOREGROUND_SERVICE,CHANGE_WIFI_MULTICAST_STATE,BLUETOOTH_CONNECT,ACCESS_NETWORK_STATE,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,MANAGE_EXTERNAL_STORAGE,ACCESS_BACKGROUND_LOCATION
+android.permissions = INTERNET,POST_NOTIFICATIONS,WAKE_LOCK,FOREGROUND_SERVICE,CHANGE_WIFI_MULTICAST_STATE,BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_SCAN, BLUETOOTH_CONNECT, BLUETOOTH_ADVERTISE,ACCESS_NETWORK_STATE,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,MANAGE_EXTERNAL_STORAGE,ACCESS_BACKGROUND_LOCATION
 
 android.api = 30
 android.minapi = 24
