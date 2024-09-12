@@ -15,8 +15,14 @@ COPY ./ Sideband/
 COPY  docker/init.gradle .gradle/
 
 # Clone required repos
-RUN git clone https://github.com/markqvist/Reticulum \
+RUN git clone https://github.com/jacobeva/Reticulum \
     && git clone https://github.com/markqvist/LXMF 
+
+# Switch branches
+WORKDIR "Reticulum"
+RUN git switch ble-dev
+
+WORKDIR ".."
 
 # Fetch files required for sideband local repository
 
@@ -41,13 +47,15 @@ RUN export VERSION=$(wget -qO - https://api.github.com/repos/markqvist/RNode_Fir
     | tr -d \", | wget -qi - -O RNode_Firmware_${VERSION}_Source.zip 
 
 # Get source for reticulum.network and unsigned.io sites
-RUN git clone https://github.com/markqvist/reticulum_website reticulum.network \
-    && cp reticulum.network/docs/manual/Reticulum\ Manual.pdf . \
-    && cp reticulum.network/docs/manual/Reticulum\ Manual.epub . 
+RUN wget -q https://github.com/markqvist/reticulum_website/archive/refs/heads/main.zip \
+    && unzip main.zip "reticulum_website-main/docs/*" \
+    && cp -r reticulum_website-main/docs reticulum.network && rm -r reticulum_website-main \
+    && cp reticulum.network/manual/Reticulum\ Manual.pdf . \
+    && cp reticulum.network/manual/Reticulum\ Manual.epub . 
 
 # A mirror can also be accessed at https://liberatedsystems.co.uk/unsigned_io_archive.zip if unsigned.io is down!
-RUN wget -q https://unsigned.io/unsigned_io_archive.zip \ 
-    && unzip -q unsigned_io_archive.zip -d unsigned.io  && rm unsigned_io_archive.zip 
+RUN wget -q https://liberatedsystems.co.uk/unsigned_io_archive.zip \ 
+    && unzip -q unsigned_io_archive.zip && rm unsigned_io_archive.zip 
 
 
 WORKDIR "../Sideband/sbapp"

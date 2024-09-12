@@ -17,7 +17,7 @@ console:
 clean:
 	@echo Cleaning...
 	-rm -r ./build
-	-rm -r ./dist
+	-rm -rf ./dist
 
 cleanbuildozer:
 	make -C sbapp cleanall
@@ -34,9 +34,12 @@ build_wheel:
 release: build_wheel apk fetchapk
 
 release_docker:
-	-mkdir -p ./dist
 	@echo If you experience errors, please ensure you have docker-buildx installed on your system.
-	sudo docker build --target=artifact --output type=local,dest=./dist/ .
+	@echo This target uses a custom buildkit image to allow for full viewing of the logs on build, but takes slightly longer as a result.
+	-mkdir -p ./dist
+	# Needed for allowing the viewing of the full log
+	-sudo docker buildx create --bootstrap --use --name buildkit --driver-opt env.BUILDKIT_STEP_LOG_MAX_SIZE=-1 --driver-opt env.BUILDKIT_STEP_LOG_MAX_SPEED=-1 &> /dev/null
+	sudo docker buildx build --target=artifact --output type=local,dest=./dist/ .
 	@echo Build successful. APK copied to ./dist directory.
 	$(MAKE) sign_release
 
