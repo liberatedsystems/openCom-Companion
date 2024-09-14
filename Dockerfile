@@ -1,9 +1,9 @@
-FROM ubuntu:22.04 as build
+FROM ubuntu:24.04 as build
 
 # Install dependencies
 RUN DEBIAN_FRONTEND=noninteractive \
   apt-get update \
-  && DEBIAN_FRONTEND=noninteractive apt-get install -y git libffi-dev python3-dev python3-virtualenv libssl-dev autoconf openjdk-17-jdk cmake libtool libssl-dev libncurses5-dev libsqlite3-dev libreadline-dev libtk8.6 libgdm-dev libdb4o-cil-dev libpcap-dev unzip zip wget apksigner  \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y git libffi-dev python3-dev python3-virtualenv libssl-dev autoconf openjdk-17-jdk cmake libtool libssl-dev libncurses5-dev libsqlite3-dev libreadline-dev libtk8.6 libgdm-dev libpcap-dev unzip zip wget apksigner build-essential libopus-dev libogg-dev patchelf \
   && apt-get install --reinstall python3 
 
 WORKDIR "/root"
@@ -63,7 +63,7 @@ WORKDIR "../Sideband/sbapp"
 # Set up virtual environment
 RUN virtualenv venv 
 
-RUN bash -c "source venv/bin/activate && pip install -U pip && pip install setuptools==60.5 wheel==0.30 buildozer cython"
+RUN bash -c "source venv/bin/activate && pip install -U pip && pip install setuptools==74.1.2 wheel==0.43 buildozer==1.4.0 cython==3.0.10 rich==13.8.1"
 
 WORKDIR "../"
 

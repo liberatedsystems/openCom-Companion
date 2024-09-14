@@ -1,4 +1,5 @@
 from os.path import join
+import os
 from pythonforandroid.recipe import Recipe
 from pythonforandroid.toolchain import current_directory, shprint
 import sh
@@ -40,6 +41,7 @@ class Codec2Recipe(Recipe):
             mkdir = sh.mkdir("-p", "build_android")
             # cd = sh.cd("build_android")
             os.chdir("build_android")
+            sh.cp("/root/Sideband/recipes/codec2/generate_codebook", "/usr/bin")
             cmake = sh.Command('cmake')
 
             shprint(cmake, *flags, _env=env)

@@ -14,9 +14,9 @@ android.numeric_version = 20240911
 
 requirements = kivy==2.3.0,libbz2,pillow==10.2.0,qrcode==7.3.1,usb4a,usbserial4a,libwebp,libogg,libopus,opusfile,numpy,cryptography,ffpyplayer,codec2,pycodec2,sh,pynacl,android,able_recipe
 
-android.gradle_dependencies =  com.android.support:support-compat:28.0.0
+#android.gradle_dependencies =  com.android.support:support-compat:28.0.0
 #android.enable_androidx = True
-#android.add_aars = patches/support-compat-28.0.0.aar
+android.add_aars = patches/support-compat-28.0.0.aar
 
 p4a.local_recipes = ../recipes/
 
@@ -40,7 +40,7 @@ android.release_artifact = apk
 android.archs = arm64-v8a,armeabi-v7a
 #android.logcat_filters = *:S python:D
 
-android.add_gradle_repositories = flatDir { dirs("../../../../../../patches") }
+android.add_gradle_repositories = "flatDir { dirs('../../../../../../patches') }"
 
 services = sidebandservice:services/sidebandservice.py:foreground
 android.whitelist = lib-dynload/termios.so

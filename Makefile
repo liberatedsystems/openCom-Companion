@@ -29,7 +29,7 @@ preparewheel:
 	$(MAKE) -C sbapp cleanrns
 
 build_wheel:
-	python3 setup.py sdist bdist_wheel
+	. sbapp/venv/bin/activate; python3 setup.py sdist bdist_wheel
 
 release: build_wheel apk fetchapk
 
