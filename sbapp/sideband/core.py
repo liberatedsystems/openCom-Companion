@@ -610,7 +610,7 @@ class SidebandCore():
         if not "hw_rnode_coding_rate" in self.config:
             self.config["hw_rnode_coding_rate"] = 6
         if not "hw_rnode_tx_power" in self.config:
-            self.config["hw_rnode_tx_power"] = 0
+            self.config["hw_rnode_tx_power"] = 22
         if not "hw_rnode_sec_frequency" in self.config:
             self.config["hw_rnode_sec_frequency"] = None
         if not "hw_rnode_sec_modulation" in self.config:
@@ -622,11 +622,11 @@ class SidebandCore():
         if not "hw_rnode_sec_coding_rate" in self.config:
             self.config["hw_rnode_sec_coding_rate"] = 6
         if not "hw_rnode_sec_tx_power" in self.config:
-            self.config["hw_rnode_sec_tx_power"] = 0
+            self.config["hw_rnode_sec_tx_power"] = 5
         if not "hw_rnode_atl_short" in self.config:
             self.config["hw_rnode_atl_short"] = None
         if not "hw_rnode_atl_long" in self.config:
-            self.config["hw_rnode_atl_long"] = None
+            self.config["hw_rnode_atl_long"] = 10
         if not "hw_rnode_sec_atl_short" in self.config:
             self.config["hw_rnode_sec_atl_short"] = None
         if not "hw_rnode_sec_atl_long" in self.config:
