@@ -13,8 +13,6 @@ import RNS.Interfaces.Interface as Interface
 
 import multiprocessing.connection
 
-import traceback #debug
-
 from copy import deepcopy
 from threading import Lock
 from .res import sideband_fb_data
@@ -245,7 +243,6 @@ class SidebandCore():
                 
         except Exception as e:
             RNS.log("Error while configuring openCom Companion: "+str(e), RNS.LOG_ERROR)
-            RNS.log(traceback.format_exc())# debug
 
         if load_config_only:
             return
