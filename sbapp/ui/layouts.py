@@ -718,7 +718,7 @@ MDScreen:
 
                         MDTextField:
                             id: connectivity_rnode_ifmode
-                            hint_text: "openCom device Mode"
+                            hint_text: "openCom Device Mode"
                             text: ""
                             font_size: dp(24)
 
@@ -1959,7 +1959,7 @@ MDScreen:
                     MDRectangleFlatIconButton:
                         id: hardware_rnode_button
                         icon: "radio-handheld"
-                        text: "openCom device"
+                        text: "openCom Device"
                         padding: [dp(0), dp(14), dp(0), dp(14)]
                         icon_size: dp(24)
                         font_size: dp(16)
@@ -2145,7 +2145,7 @@ MDScreen:
         orientation: "vertical"
 
         MDTopAppBar:
-            title: "openCom device"
+            title: "openCom Device"
             anchor_title: "left"
             elevation: 0
             left_action_items:
@@ -2172,7 +2172,7 @@ MDScreen:
                 MDLabel:
                     id: hardware_rnode_info
                     markup: True
-                    text: "To communicate using an openCom device (for example, the openCom XL), you can choose from the below options to customise the frequency channel and the communication preset. For two or more openCom devices to be able to communicate, all parameters must match, except for the [i]Coding Rate[/i] and [i]TX Power[/i] parameter, which can vary between devices. openCom devices are also capable of communicating with RNodes. You can select [i]Advanced Configuration[/i] to configure the modulation parameters for your device yourself, if you so wish. [b]Please enable [i]Configure Secondary Modem[/i] to use both modems if you are using an openCom XL[/b].\\n"
+                    text: "To communicate using an openCom device (for example, the openCom XL), you can choose from the below options to customise the frequency channel and the communication preset. For two or more openCom devices to be able to communicate, all parameters must match, except for the [i]Coding Rate[/i] and [i]TX Power[/i] parameter, which can vary between devices. openCom devices are also capable of communicating with RNodes. You can select [i]Advanced Configuration[/i] to configure the modulation parameters for your device yourself, if you so wish. [b]Please enable [i]Configure Secondary Modem[/i] to use both modems if you are using an openCom XL[/b].\\nPlease also note that the frequency channel and communication presets are provided with absolutely no warranty or guarantee. You [b]must[/b] check that they are suitable for legal use in your country if you are unsure.\\n"
                     size_hint_y: None
                     text_size: self.width, None
                     height: self.texture_size[1]
