@@ -6,7 +6,7 @@ apk:
 	mkdir -p ./dist
 
 fetchapk:
-	cp ./sbapp/bin/sideband-*-release-unsigned.apk ./dist/
+	cp ./sbapp/bin/occ-*-release-unsigned.apk ./dist/
 
 install:
 	make -C sbapp install
@@ -51,8 +51,8 @@ sign_release:
 	@read VOID
 	if [ ! -f "./key.keystore" ]; then keytool -genkey -v -keystore key.keystore -keyalg RSA -keysize 4096 -validity 10000 -alias app; fi
 	VERSION=$(shell ls ./dist/*.apk | cut -d\- -f 2 | head -n 1); \
-	zipalign -p 4 ./dist/sideband-*-release-unsigned.apk ./dist/sideband-$$VERSION-release.apk; \
-	apksigner sign --ks-key-alias app --ks key.keystore ./dist/sideband-$$VERSION-release.apk; \
+	zipalign -p 4 ./dist/occ-*-release-unsigned.apk ./dist/occ-$$VERSION-release.apk; \
+	apksigner sign --ks-key-alias app --ks key.keystore ./dist/occ-$$VERSION-release.apk; \
 
 upload:
 	@echo Ready to publish release, hit enter to continue

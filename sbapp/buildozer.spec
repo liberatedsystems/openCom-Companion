@@ -1,7 +1,7 @@
 [app]
-title = Sideband
-package.name = sideband
-package.domain = io.unsigned
+title = OCC
+package.name = occ
+package.domain = uk.co.liberatedsystems
 
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,webp,ttf,kv,pyi,typed,so,0,1,2,3,atlas,frag,html,css,js,whl,zip,gz,woff2,pdf,epub,pgm

@@ -66,7 +66,7 @@ class SidebandService():
         if android_api_version < 26:
             return
         else:
-            package_name = "io.unsigned.sideband"
+            package_name = "uk.co.liberatedsystems.occ"
 
             if not self.notification_service:
                 self.notification_service = cast(NotificationManager, self.app_context.getSystemService(
@@ -83,7 +83,7 @@ class SidebandService():
                 group_id += "."+str(context_id)
 
             if not title or title == "":
-                channel_name = "Sideband"
+                channel_name = "openCom Companion"
             else:
                 channel_name = title
 
@@ -344,10 +344,12 @@ class SidebandService():
 
             if self.sideband.interface_rnode != None:
                 if self.sideband.interface_rnode.online:
-                    if self.sideband.interface_rnode is RNS.Interfaces.Android.RNodeMultiInterface.RNodeMultiInterface:
+                    if type(self.sideband.interface_rnode) is RNS.Interfaces.Android.RNodeMultiInterface.RNodeMultiInterface:
                         rs = ""
                         for subinterface in self.sideband.interface_rnode.subinterfaces:
-                            rs += "On-air at "+str(subinterface.bitrate_kbps)+" Kbps \n" # \todo does this work?
+                            if subinterface is not int:
+                                rs += "On-air at "+str(subinterface.bitrate_kbps)+" Kbps \n" # \todo does this work?
+                                RNS.log("On-air iteration!", RNS.LOG_DEBUG) # debug
                     else:
                         rs = "On-air at "+str(self.sideband.interface_rnode.bitrate_kbps)+" Kbps"
                 else:

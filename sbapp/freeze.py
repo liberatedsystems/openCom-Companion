@@ -60,13 +60,13 @@ package_data = {
     ]
 }
 
-print("Freezing Sideband "+__version__+" "+__variant__)
+print("Freezing openCom Companion "+__version__+" "+__variant__)
 
 if build_appimage:
     global_excludes = [".buildozer", "build", "dist"]
     # Dependencies are automatically detected, but they might need fine-tuning.
     appimage_options = {
-        "target_name": "Sideband",
+        "target_name": "openCom Companion",
         "target_version": __version__+" "+__variant__,
         "include_files": [],
         "excludes": [],
@@ -76,19 +76,19 @@ if build_appimage:
     }
 
     cx_Freeze.setup(
-        name="Sideband",
+        name="openCom Companion",
         version=__version__,
-        author="Mark Qvist",
-        author_email="mark@unsigned.io",
-        url="https://unsigned.io/sideband",
+        author="Liberated Embedded Systems",
+        author_email="contact@liberatedsystems.co.uk",
+        url="https://git.liberatedsystems.co.uk/jacob.eva/openCom-Companion",
         executables=[
             cx_Freeze.Executable(
                 script="main.py",
                 base="console",
-                target_name="Sideband",
-                shortcut_name="Sideband",
+                target_name="openCom Companion",
+                shortcut_name="openCom Companion",
                 icon="assets/icon.png",
-                copyright="Copyright (c) 2024 Mark Qvist",
+                copyright="Copyright (c) 2024 Liberated Embedded Systems",
             ),
         ],
         options={"build_appimage": appimage_options},

@@ -13,6 +13,8 @@ import RNS.Interfaces.Interface as Interface
 
 import multiprocessing.connection
 
+import traceback #debug
+
 from copy import deepcopy
 from threading import Lock
 from .res import sideband_fb_data
@@ -157,7 +159,7 @@ class SidebandCore():
         self.version_str = ""
 
         if config_path == None:
-            self.app_dir     = plyer.storagepath.get_home_dir()+"/.config/sideband"
+            self.app_dir     = plyer.storagepath.get_home_dir()+"/.config/occ"
             if self.app_dir.startswith("file://"):
                 self.app_dir = self.app_dir.replace("file://", "")
         else:
@@ -167,19 +169,19 @@ class SidebandCore():
         
         self.rns_configdir = None
         if RNS.vendor.platformutils.is_android():
-            self.app_dir = android_app_dir+"/io.unsigned.sideband/files/"
+            self.app_dir = android_app_dir+"/uk.co.liberatedsystems.occ/files/"
             self.cache_dir = self.app_dir+"/cache"
             self.rns_configdir = self.app_dir+"/app_storage/reticulum"
             self.asset_dir     = self.app_dir+"/app/assets"
         elif RNS.vendor.platformutils.is_darwin():
             core_path          = os.path.abspath(__file__)
-            self.asset_dir     = core_path.replace("/sideband/core.py", "/assets")
+            self.asset_dir     = core_path.replace("/occ/core.py", "/assets")
         elif RNS.vendor.platformutils.get_platform() == "linux":
             core_path          = os.path.abspath(__file__)
-            self.asset_dir     = core_path.replace("/sideband/core.py", "/assets")
+            self.asset_dir     = core_path.replace("/occ/core.py", "/assets")
         elif RNS.vendor.platformutils.is_windows():
             core_path          = os.path.abspath(__file__)
-            self.asset_dir     = core_path.replace("\\sideband\\core.py", "\\assets")
+            self.asset_dir     = core_path.replace("\\occ\\core.py", "\\assets")
         else:
             self.asset_dir     = plyer.storagepath.get_application_dir()+"/sbapp/assets"
 
@@ -202,9 +204,9 @@ class SidebandCore():
         if not os.path.isdir(self.app_dir+"/app_storage"):
             os.makedirs(self.app_dir+"/app_storage")
 
-        self.config_path   = self.app_dir+"/app_storage/sideband_config"
+        self.config_path   = self.app_dir+"/app_storage/occ_config"
         self.identity_path = self.app_dir+"/app_storage/primary_identity"
-        self.db_path       = self.app_dir+"/app_storage/sideband.db"
+        self.db_path       = self.app_dir+"/app_storage/occ.db"
         self.lxmf_storage  = self.app_dir+"/app_storage/"
         self.log_dir       = self.app_dir+"/app_storage/"
         self.tmp_dir       = self.app_dir+"/app_storage/tmp"
@@ -242,7 +244,8 @@ class SidebandCore():
                 self.clear_exports_dir()
                 
         except Exception as e:
-            RNS.log("Error while configuring Sideband: "+str(e), RNS.LOG_ERROR)
+            RNS.log("Error while configuring openCom Companion: "+str(e), RNS.LOG_ERROR)
+            RNS.log(traceback.format_exc())# debug
 
         if load_config_only:
             return
@@ -297,11 +300,11 @@ class SidebandCore():
                         local_share_dir = os.path.expanduser("~/.local/share")
                         app_entry_dir = os.path.expanduser("~/.local/share/applications")
                         icon_dir = os.path.expanduser("~/.local/share/icons/hicolor/512x512/apps")
-                        de_filename = "io.unsigned.sideband.desktop"
+                        de_filename = "uk.co.liberatedsystems.occ.desktop"
                         de_source = self.asset_dir+"/"+de_filename
                         de_target = app_entry_dir+"/"+de_filename
                         icn_source = self.asset_dir+"/icon.png"
-                        icn_target = icon_dir+"/io.unsigned.sideband.png"
+                        icn_target = icon_dir+"/uk.co.liberatedsystems.occ.png"
                         if os.path.isdir(local_share_dir):
                             if not os.path.exists(app_entry_dir):
                                 os.makedirs(app_entry_dir)
@@ -355,7 +358,7 @@ class SidebandCore():
                 os.unlink(fpath)
 
     def __init_config(self):
-        RNS.log("Creating new Sideband configuration...")
+        RNS.log("Creating new openCom Companion configuration...")
         if os.path.isfile(self.identity_path):
             self.identity = RNS.Identity.from_file(self.identity_path)
         else:
@@ -433,12 +436,12 @@ class SidebandCore():
         channel_keys = sorted(self.config["hw_rnode_channels"].keys())
         self.config["hw_rnode_channel_index"] = 0
         self.config["hw_rnode_channel"] = channel_keys[0]
-        self.config["hw_rnode_frequency"] = None
+        self.config["hw_rnode_frequency"] = self.config["hw_rnode_channels"]["Channel 1"] * 1000000
         self.config["hw_rnode_modulation"] = "LoRa"
         self.config["hw_rnode_preset_index"] = 0
-        self.config["hw_rnode_bandwidth"] = 62500
-        self.config["hw_rnode_spreading_factor"] = 8
-        self.config["hw_rnode_coding_rate"] = 6
+        self.config["hw_rnode_bandwidth"] = self.config["hw_rnode_presets_cfg"][0][0]
+        self.config["hw_rnode_spreading_factor"] = self.config["hw_rnode_presets_cfg"][0][1]
+        self.config["hw_rnode_coding_rate"] = self.config["hw_rnode_presets_cfg"][0][2]
         self.config["hw_rnode_tx_power"] = 22
         self.config["hw_rnode_secondary_modem"] = False
         self.config["hw_rnode_sec_presets_cfg"] = [[1625000, 5, 5, 100, 100], [1625000, 7, 6, 100, 100], [1625000, 9, 7, 100, 100], [1625000, 12, 8, 100, 100]]
@@ -453,12 +456,12 @@ class SidebandCore():
         channel_keys = sorted(self.config["hw_rnode_sec_channels"].keys())
         self.config["hw_rnode_sec_channel_index"] = 0
         self.config["hw_rnode_sec_channel"] = channel_keys[0]
-        self.config["hw_rnode_sec_frequency"] = None
+        self.config["hw_rnode_sec_frequency"] = self.config["hw_rnode_sec_channels"]["Channel 1"] * 1000000
         self.config["hw_rnode_sec_modulation"] = "LoRa"
         self.config["hw_rnode_sec_preset_index"] = 0
-        self.config["hw_rnode_sec_bandwidth"] = 62500
-        self.config["hw_rnode_sec_spreading_factor"] = 8
-        self.config["hw_rnode_sec_coding_rate"] = 6
+        self.config["hw_rnode_sec_bandwidth"] = self.config["hw_rnode_presets_cfg"][0][0]
+        self.config["hw_rnode_sec_spreading_factor"] = self.config["hw_rnode_presets_cfg"][0][1]
+        self.config["hw_rnode_sec_coding_rate"] = self.config["hw_rnode_presets_cfg"][0][2]
         self.config["hw_rnode_tx_power"] = 5
         self.config["hw_rnode_beaconinterval"] = None
         self.config["hw_rnode_beacondata"] = None
@@ -515,13 +518,13 @@ class SidebandCore():
         self.save_configuration()
 
     def __load_config(self):
-        RNS.log("Loading Sideband identity...", RNS.LOG_DEBUG)
+        RNS.log("Loading openCom Companion identity...", RNS.LOG_DEBUG)
         self.identity = RNS.Identity.from_file(self.identity_path)
 
         self.rpc_addr = ("127.0.0.1", 48165)
         self.rpc_key  = RNS.Identity.full_hash(self.identity.get_private_key())
 
-        RNS.log("Loading Sideband configuration... "+str(self.config_path), RNS.LOG_DEBUG)
+        RNS.log("Loading openCom Companion configuration... "+str(self.config_path), RNS.LOG_DEBUG)
         config_file = open(self.config_path, "rb")
         self.config = msgpack.unpackb(config_file.read())
         config_file.close()
@@ -790,7 +793,7 @@ class SidebandCore():
             self.__db_indices()
 
     def __reload_config(self):
-        RNS.log("Reloading Sideband configuration... ", RNS.LOG_DEBUG)
+        RNS.log("Reloading openCom Companion configuration... ", RNS.LOG_DEBUG)
         with open(self.config_path, "rb") as config_file:
             config_data = config_file.read()
 
@@ -804,7 +807,7 @@ class SidebandCore():
             RNS.log("Error while reloading configuration: "+str(e), RNS.LOG_ERROR)
 
     def __save_config(self):
-        RNS.log("Saving Sideband configuration...", RNS.LOG_DEBUG)
+        RNS.log("Saving openCom Companion configuration...", RNS.LOG_DEBUG)
         def save_function():
             while self.saving_configuration:
                 time.sleep(0.15)
@@ -816,7 +819,7 @@ class SidebandCore():
                 self.saving_configuration = False
             except Exception as e:
                 self.saving_configuration = False
-                RNS.log("Error while saving Sideband configuration: "+str(e), RNS.LOG_ERROR)
+                RNS.log("Error while saving openCom Companion configuration: "+str(e), RNS.LOG_ERROR)
 
         threading.Thread(target=save_function, daemon=True).start()
 
@@ -831,7 +834,7 @@ class SidebandCore():
         
         if plugins_enabled:
             if plugins_path != None:
-                RNS.log("Loading Sideband plugins...", RNS.LOG_DEBUG)
+                RNS.log("Loading openCom Companion plugins...", RNS.LOG_DEBUG)
                 if os.path.isdir(plugins_path):
                     for file in os.listdir(plugins_path):
                         if file.lower().endswith(".py"):
@@ -3131,7 +3134,7 @@ class SidebandCore():
                                     target_port = self.owner_app.usb_devices[0]["port"]
                                     RNS.Interfaces.Android.RNodeInterface.RNodeInterface.bluetooth_control(port=target_port, pairing_mode = True)
                                 except Exception as e:
-                                    self.setstate("hardware_operation.error", "An error occurred while trying to communicate with the device. Please make sure that Sideband has been granted permissions to access the device.\n\nThe reported error was:\n\n[i]"+str(e)+"[/i]")
+                                    self.setstate("hardware_operation.error", "An error occurred while trying to communicate with the device. Please make sure that openCom Companion has been granted permissions to access the device.\n\nThe reported error was:\n\n[i]"+str(e)+"[/i]")
                             else:
                                 RNS.log("Could not execute RNode Bluetooth control command, no USB devices available", RNS.LOG_ERROR)
                     self.setstate("executing.bt_pair", False)
@@ -3786,7 +3789,7 @@ class SidebandCore():
             self.message_router.ignore_stamps()
         
         # TODO: Update to announce call in LXMF when full 0.5.0 support is added (get app data from LXMRouter instead)
-        # Currently overrides the LXMF routers auto-generated announce data so that Sideband will announce old-format
+        # Currently overrides the LXMF routers auto-generated announce data so that openCom Companion will announce old-format
         # LXMF announces if require_stamps is disabled.
         # if not self.config["lxmf_require_stamps"]:
         #     self.lxmf_destination.set_default_app_data(self.get_display_name_bytes)
@@ -4255,7 +4258,7 @@ class SidebandCore():
         thread.start()
 
         self.setstate("core.started", True)
-        RNS.log("Sideband Core "+str(self)+" version "+str(self.version_str)+" started")
+        RNS.log("openCom Companion Core "+str(self)+" version "+str(self.version_str)+" started")
 
     def stop_webshare(self):
         if self.webshare_server != None:

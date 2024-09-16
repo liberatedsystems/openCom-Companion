@@ -67,17 +67,17 @@ package_data = {
     ]
 }
 
-print("Packaging Sideband "+__version__+" "+__variant__)
+print("Packaging openCom Companion "+__version__+" "+__variant__)
 
 setuptools.setup(
-    name="sbapp",
+    name="occ",
     version=__version__,
-    author="Mark Qvist",
-    author_email="mark@unsigned.io",
+    author="Liberated Embedded Systems",
+    author_email="contact@liberatedsystems.co.uk",
     description="LXMF client for Android, Linux and macOS allowing you to communicate with people or LXMF-compatible systems over Reticulum networks using LoRa, Packet Radio, WiFi, I2P, or anything else Reticulum supports.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://unsigned.io/sideband",
+    url="https://git.liberatedsystems.co.uk/jacob.eva/opencom_companion",
     packages=packages,
     package_data=package_data,
     include_package_data=True,
@@ -87,8 +87,8 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     data_files = [
-        ('share/applications', ['sbapp/assets/io.unsigned.sideband.desktop']),
-        ('share/icons/hicolor/512x512/apps', ['sbapp/assets/io.unsigned.sideband.png']),
+        ('share/applications', ['sbapp/assets/uk.co.liberatedsystems.occ.desktop']),
+        ('share/icons/hicolor/512x512/apps', ['sbapp/assets/uk.co.liberatedsystems.occ.png']),
     ],
     entry_points= {
         'console_scripts': [

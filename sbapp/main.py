@@ -5,7 +5,7 @@ __variant__ = "beta"
 
 import sys
 import argparse
-parser = argparse.ArgumentParser(description="Sideband LXMF Client")
+parser = argparse.ArgumentParser(description="openCom Companion LXMF Client")
 parser.add_argument("-v", "--verbose", action='store_true', default=False, help="increase logging verbosity")
 parser.add_argument("-c", "--config", action='store', default=None, help="specify path of config directory")
 parser.add_argument("-d", "--daemon", action='store_true', default=False, help="run as a daemon, without user interface")
@@ -243,7 +243,7 @@ class SidebandApp(MDApp):
     PAUSED   = 0x02
     STOPPING = 0x03
 
-    PKGNAME  = "io.unsigned.sideband"
+    PKGNAME  = "uk.co.liberatedsystems.occ"
 
     SERVICE_TIMEOUT = 30
 
@@ -252,7 +252,7 @@ class SidebandApp(MDApp):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.title = "Sideband"
+        self.title = "openCom Companion"
         self.app_state = SidebandApp.STARTING
         self.android_service = None
         self.app_dir = plyer.storagepath.get_application_dir()
@@ -372,7 +372,7 @@ class SidebandApp(MDApp):
 
         RNS.log("Launching platform-specific service for RNS and LXMF")
         if RNS.vendor.platformutils.get_platform() == "android":
-            self.android_service = autoclass('io.unsigned.sideband.ServiceSidebandservice')
+            self.android_service = autoclass('uk.co.liberatedsystems.occ.ServiceSidebandservice')
             mActivity = autoclass('org.kivy.android.PythonActivity').mActivity
             argument = self.app_dir
             self.android_service.start(mActivity, argument)
@@ -629,7 +629,7 @@ class SidebandApp(MDApp):
                     image.save(file_path)
 
                 i_file = File(file_path)
-                image_uri = FileProvider.getUriForFile(mActivity, "io.unsigned.sideband.provider", i_file)
+                image_uri = FileProvider.getUriForFile(mActivity, "uk.co.liberatedsystems.occ.provider", i_file)
 
                 shareIntent = Intent()
                 shareIntent.setAction(Intent.ACTION_SEND)
@@ -767,7 +767,7 @@ class SidebandApp(MDApp):
                 ok_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
                 dialog = MDDialog(
                     title="Storage Permission",
-                    text="Sideband needs external storage permission to read offline map files.\n\nOn this Android version, the Manage All Files permission is needed, since normal external storage permission is no longer supported.\n\nSideband will only ever read and write to files you select, and does not read any other data from your system.",
+                    text="openCom Companion needs external storage permission to read offline map files.\n\nOn this Android version, the Manage All Files permission is needed, since normal external storage permission is no longer supported.\n\nopenCom Companion will only ever read and write to files you select, and does not read any other data from your system.",
                     buttons=[ ok_button ],
                 )
                 def dl_ok(s):
@@ -867,7 +867,7 @@ class SidebandApp(MDApp):
             if RNS.vendor.platformutils.is_android() and not self.sideband.service_available():
                 if time.time() - self.service_last_available > SidebandApp.SERVICE_TIMEOUT:
                     if self.app_state == SidebandApp.ACTIVE:
-                        info_text = "The Reticulum and LXMF service seem to have disappeared, and Sideband is no longer connected. This should not happen, and probably indicates a bug in the background service. Please restart Sideband to regain connectivity."
+                        info_text = "The Reticulum and LXMF service seem to have disappeared, and openCom Companion is no longer connected. This should not happen, and probably indicates a bug in the background service. Please restart openCom Companion to regain connectivity."
                         ok_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
                         dialog = MDDialog(
                             title="Error",
@@ -1004,7 +1004,7 @@ class SidebandApp(MDApp):
             variant_str = ""
 
         self.root.ids.screen_manager.app = self
-        self.root.ids.app_version_info.text = "Sideband v"+__version__+variant_str
+        self.root.ids.app_version_info.text = "openCom Companion v"+__version__+variant_str
         self.root.ids.nav_scrollview.effect_cls = ScrollEffect
         Clock.schedule_once(self.start_core, 0.25)
 
@@ -1657,7 +1657,7 @@ class SidebandApp(MDApp):
                 self.compat_error_dialog.dismiss()
             self.compat_error_dialog = MDDialog(
                 title="Could not load Codec2",
-                text="The Codec2 library could not be loaded. This likely means that you do not have the [b]codec2[/b] package or shared library installed on your system.\n\nThis library is normally installed automatically when Sideband is installed, but on some systems, this is not possible.\n\nTry installing it with a command such as [b]pamac install codec2[/b] or [b]apt install codec2[/b], or by compiling it from source for this system.",
+                text="The Codec2 library could not be loaded. This likely means that you do not have the [b]codec2[/b] package or shared library installed on your system.\n\nThis library is normally installed automatically when openCom Companion is installed, but on some systems, this is not possible.\n\nTry installing it with a command such as [b]pamac install codec2[/b] or [b]apt install codec2[/b], or by compiling it from source for this system.",
                 buttons=[
                     MDRectangleFlatButton(
                         text="OK",
@@ -2213,9 +2213,9 @@ class SidebandApp(MDApp):
 
             else:
                 if self.sideband.reticulum.is_connected_to_shared_instance:
-                    connectivity_status = "Sideband is connected via a shared Reticulum instance running on this system. Use the [b]rnstatus[/b] utility to obtain full connectivity info."
+                    connectivity_status = "openCom Companion is connected via a shared Reticulum instance running on this system. Use the [b]rnstatus[/b] utility to obtain full connectivity info."
                 else:
-                    connectivity_status = "Sideband is currently running a standalone or master Reticulum instance on this system. Use the [b]rnstatus[/b] utility to obtain full connectivity info."
+                    connectivity_status = "openCom Companion is currently running a standalone or master Reticulum instance on this system. Use the [b]rnstatus[/b] utility to obtain full connectivity info."
 
             return connectivity_status
         except Exception as e:
@@ -2463,8 +2463,8 @@ class SidebandApp(MDApp):
             str_comps += "\n - [b]Kivy[/b] (MIT License)\n - [b]Codec2[/b] (LGPL License)\n - [b]PyCodec2[/b] (BSD-3 License)"
             str_comps += "\n - [b]PyDub[/b] (MIT License)\n - [b]PyOgg[/b] (Public Domain)"
             str_comps += "\n - [b]GeoidHeight[/b] (LGPL License)\n - [b]Python[/b] (PSF License)"
-            str_comps += "\n\nGo to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project.\n\nThe Sideband app is Copyright (c) 2024 Mark Qvist / unsigned.io\n\nPermission is granted to freely share and distribute binary copies of Sideband v"+__version__+" "+__variant__+", so long as no payment or compensation is charged for said distribution or sharing.\n\nIf you were charged or paid anything for this copy of Sideband, please report it to [b]license@unsigned.io[/b].\n\nTHIS IS EXPERIMENTAL SOFTWARE - SIDEBAND COMES WITH ABSOLUTELY NO WARRANTY - USE AT YOUR OWN RISK AND RESPONSIBILITY"
-            info = "This is "+self.root.ids.app_version_info.text+", on RNS v"+RNS.__version__+" and LXMF v"+LXMF.__version__+".\n\nHumbly build using the following open components:\n\n"+str_comps
+            str_comps += "\n\nGo to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the upstream Sideband project.\n\nThe openCom Companion app is Copyright (c) 2024 Liberated Embedded Systems.\n\nPermission is granted to freely share and distribute binary copies of openCom Companion v"+__version__+" "+__variant__+", so long as no payment or compensation is charged for said distribution or sharing.\n\nIf you were charged or paid anything for this copy of openCom Companion, please report it to [b]contact@liberatedsystems.co.uk[/b].\n\nTHIS IS EXPERIMENTAL SOFTWARE - OPENCOM COMPANION COMES WITH ABSOLUTELY NO WARRANTY - USE AT YOUR OWN RISK AND RESPONSIBILITY"
+            info = "This is "+self.root.ids.app_version_info.text+", on RNS v"+RNS.__version__+" and LXMF v"+LXMF.__version__+".\n\nHumbly built using the following open components:\n\n"+str_comps
             self.information_screen.ids.information_info.text = info
             self.information_screen.ids.information_info.bind(on_ref_press=link_exec)
 
@@ -2558,7 +2558,7 @@ class SidebandApp(MDApp):
 
             info1_text  = "\nYou can set your [b]Display Name[/b] to a custom value, or leave it as the default unspecified value. "
             info1_text += "This name will be included in any announces you send, and will be visible to others on the network. "
-            info1_text += "\n\nYou can manually specify which [b]Propagation Node[/b] to use, but if none is specified, Sideband will "
+            info1_text += "\n\nYou can manually specify which [b]Propagation Node[/b] to use, but if none is specified, openCom Companion will "
             info1_text += "automatically select one nearby."
             if RNS.vendor.platformutils.is_android():
                 info1_text += "\n\nDouble-tap any field to copy its value, and double-tap an empty field to paste into it."
@@ -3133,13 +3133,13 @@ class SidebandApp(MDApp):
 
             if RNS.vendor.platformutils.get_platform() == "android":
                 if not self.sideband.getpersistent("service.is_controlling_connectivity"):
-                    info =  "Sideband is connected via a shared Reticulum instance running on this system.\n\n"
+                    info =  "openCom Companion is connected via a shared Reticulum instance running on this system.\n\n"
                     info += "To configure connectivity, edit the relevant configuration file for the instance."
                     self.connectivity_screen.ids.connectivity_info.text = info
                     con_hide_settings()
 
                 else:
-                    info =  "By default, Sideband will try to discover and connect to any available Reticulum networks via active WiFi and/or Ethernet interfaces. If any Reticulum Transport Instances are found, Sideband will use these to connect to wider Reticulum networks. You can disable this behaviour if you don't want it.\n\n"
+                    info =  "By default, openCom Companion will try to discover and connect to any available Reticulum networks via active WiFi and/or Ethernet interfaces. If any Reticulum Transport Instances are found, openCom Companion will use these to connect to wider Reticulum networks. You can disable this behaviour if you don't want it.\n\n"
                     info += "You can also connect to a network via a remote or local Reticulum instance using TCP or I2P. [b]Please Note![/b] Connecting via I2P requires that you already have I2P running on your device, and that the SAM API is enabled.\n\n"
                     info += "For changes to connectivity to take effect, you must shut down and restart Sideband.\n"
                     self.connectivity_screen.ids.connectivity_info.text = info
@@ -3227,12 +3227,12 @@ class SidebandApp(MDApp):
                 info = ""
 
                 if self.sideband.reticulum.is_connected_to_shared_instance:
-                    info =  "Sideband is connected via a shared Reticulum instance running on this system.\n\n"
+                    info =  "openCom Companion is connected via a shared Reticulum instance running on this system.\n\n"
                     info += "To get connectivity status, use the [b]rnstatus[/b] utility.\n\n"
                     info += "To configure connectivity, edit the configuration file located at:\n\n"
                     info += str(RNS.Reticulum.configpath)
                 else:
-                    info =  "Sideband is currently running a standalone or master Reticulum instance on this system.\n\n"
+                    info =  "openCom Companion is currently running a standalone or master Reticulum instance on this system.\n\n"
                     info += "To get connectivity status, use the [b]rnstatus[/b] utility.\n\n"
                     info += "To configure connectivity, edit the configuration file located at:\n\n"
                     info += str(RNS.Reticulum.configpath)
@@ -3305,8 +3305,8 @@ class SidebandApp(MDApp):
             threading.Thread(target=lj, daemon=True).start()
 
     def repository_update_info(self, sender=None):
-        info =  "Sideband includes a small repository of useful software and guides related to the Sideband and Reticulum ecosystem. You can start this repository to allow other people on your local network to download software and information directly from this device, without needing an Internet connection.\n\n"
-        info += "If you want to share the Sideband application itself via the repository server, you must first download it into the local repository, using the \"Update Content\" button below.\n\n"
+        info =  "openCom Companion includes a small repository of useful software and guides related to the openCom Companion and Reticulum ecosystem. You can start this repository to allow other people on your local network to download software and information directly from this device, without needing an Internet connection.\n\n"
+        info += "If you want to share the openCom Companion application itself via the repository server, you must first download it into the local repository, using the \"Update Content\" button below.\n\n"
         info += "To make the repository available on your local network, simply start it below, and it will become browsable on a local IP address for anyone connected to the same WiFi or wired network.\n\n"
         if self.sideband.webshare_server != None:
             if RNS.vendor.platformutils.is_android():                    
@@ -3485,14 +3485,14 @@ class SidebandApp(MDApp):
 
             if RNS.vendor.platformutils.get_platform() == "android":
                 if not self.sideband.getpersistent("service.is_controlling_connectivity"):
-                    info =  "Sideband is connected via a shared Reticulum instance running on this system.\n\n"
+                    info =  "openCom Companion is connected via a shared Reticulum instance running on this system.\n\n"
                     info += "To configure hardware parameters, edit the relevant configuration file for the instance."
                     self.hardware_screen.ids.hardware_info.text = info
                     con_hide_settings()
 
                 else:
-                    info =  "When using external hardware for communicating, you may configure various parameters, such as channel settings, modulation schemes, interface speeds and access parameters. You can set up these parameters per device type, and Sideband will apply the configuration when opening a device of that type.\n\n"
-                    info += "Hardware configurations can also be exported or imported as [i]config motes[/i], which are self-contained plaintext strings that are easy to share with others. When importing a config mote, Sideband will automatically set all relevant parameters as specified within it.\n\n"
+                    info =  "When using external hardware for communicating, you may configure various parameters, such as channel settings, modulation schemes, interface speeds and access parameters. You can set up these parameters per device type, and openCom Companion will apply the configuration when opening a device of that type.\n\n"
+                    info += "Hardware configurations can also be exported or imported as [i]config motes[/i], which are self-contained plaintext strings that are easy to share with others. When importing a config mote, openCom Companion will automatically set all relevant parameters as specified within it.\n\n"
                     info += "For changes to hardware parameters to take effect, you must shut down and restart Sideband.\n"
                     self.hardware_screen.ids.hardware_info.text = info
 
@@ -3500,11 +3500,11 @@ class SidebandApp(MDApp):
                 info = ""
 
                 if self.sideband.reticulum.is_connected_to_shared_instance:
-                    info =  "Sideband is connected via a shared Reticulum instance running on this system.\n\n"
+                    info =  "openCom Companion is connected via a shared Reticulum instance running on this system.\n\n"
                     info += "To configure hardware parameters, edit the configuration file located at:\n\n"
                     info += str(RNS.Reticulum.configpath)
                 else:
-                    info =  "Sideband is currently running a standalone or master Reticulum instance on this system.\n\n"
+                    info =  "openCom Companion is currently running a standalone or master Reticulum instance on this system.\n\n"
                     info += "To configure hardware parameters, edit the configuration file located at:\n\n"
                     info += str(RNS.Reticulum.configpath)
 
@@ -4855,7 +4855,7 @@ class SidebandApp(MDApp):
             self.bind_clipboard_actions(self.keys_screen.ids)
 
             self.keys_screen.ids.keys_scrollview.effect_cls = ScrollEffect
-            info = "Your primary encryption keys are stored in a Reticulum Identity within the Sideband app. If you want to backup this Identity for later use on this or another device, you can export it as a plain text blob, with the key data encoded in Base32 format. This will allow you to restore your address in Sideband or other LXMF clients at a later point.\n\n[b]Warning![/b] Anyone that gets access to the key data will be able to control your LXMF address, impersonate you, and read your messages. In is [b]extremely important[/b] that you keep the Identity data secure if you export it.\n\nBefore displaying or exporting your Identity data, make sure that no machine or person in your vicinity is able to see, copy or record your device screen or similar."
+            info = "Your primary encryption keys are stored in a Reticulum Identity within the openCom Companion app. If you want to backup this Identity for later use on this or another device, you can export it as a plain text blob, with the key data encoded in Base32 format. This will allow you to restore your address in openCom Companion or other LXMF clients at a later point.\n\n[b]Warning![/b] Anyone that gets access to the key data will be able to control your LXMF address, impersonate you, and read your messages. In is [b]extremely important[/b] that you keep the Identity data secure if you export it.\n\nBefore displaying or exporting your Identity data, make sure that no machine or person in your vicinity is able to see, copy or record your device screen or similar."
 
             if not RNS.vendor.platformutils.get_platform() == "android":
                 self.widget_hide(self.keys_screen.ids.keys_share)
@@ -4938,7 +4938,7 @@ class SidebandApp(MDApp):
                     new_id.to_file(self.sideband.identity_path)
 
                 yes_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
-                dialog = MDDialog(text="[b]The provided Identity key data was imported[/b]\n\nThe app will now exit. Please restart Sideband to use the new Identity.", buttons=[ yes_button ])
+                dialog = MDDialog(text="[b]The provided Identity key data was imported[/b]\n\nThe app will now exit. Please restart openCom Companion to use the new Identity.", buttons=[ yes_button ])
                 def dl_yes(s):
                     dialog.dismiss()
                     self.quit_action(sender=self)
@@ -4982,12 +4982,12 @@ class SidebandApp(MDApp):
             self.bind_clipboard_actions(self.plugins_screen.ids)
 
             self.plugins_screen.ids.plugins_scrollview.effect_cls = ScrollEffect
-            info1 = "You can extend Sideband functionality with command and service plugins. This lets you to add your own custom functionality, or add community-developed features.\n"
-            info2 = "[b]Take extreme caution![/b]\nIf you add a plugin that you did not write yourself, make [b]absolutely[/b] sure you know what it is doing! Loaded plugins have full access to your Sideband application, and should only be added if you are completely certain they are trustworthy.\n\n"
+            info1 = "You can extend openCom Companion functionality with command and service plugins. This lets you to add your own custom functionality, or add community-developed features.\n"
+            info2 = "[b]Take extreme caution![/b]\nIf you add a plugin that you did not write yourself, make [b]absolutely[/b] sure you know what it is doing! Loaded plugins have full access to your openCom Companion application, and should only be added if you are completely certain they are trustworthy.\n\n"
             info2 += "[i]Command Plugins[/i] allow you to define custom commands that can be carried out in response to LXMF command messages, and they can respond with any kind of information or data to the requestor (or to any LXMF address).\n\n"
-            info2 += "By using [i]Service Plugins[/i], you can start additional services or programs within the Sideband application context, that other plugins (or Sideband itself) can interact with.\n\n"
-            info2 += "With [i]Telemetry Plugins[/i], you can add custom telemetry from external devices and services to the Sideband telemetry system.\n\n"
-            info2 += "Restart Sideband for changes to these settings to take effect."
+            info2 += "By using [i]Service Plugins[/i], you can start additional services or programs within the openCom Companion application context, that other plugins (or openCom Companion itself) can interact with.\n\n"
+            info2 += "With [i]Telemetry Plugins[/i], you can add custom telemetry from external devices and services to the openCom Companion telemetry system.\n\n"
+            info2 += "Restart openCom Companion for changes to these settings to take effect."
             self.plugins_screen.ids.plugins_info1.text = info1
             self.plugins_screen.ids.plugins_info2.text = info2
 
@@ -5611,7 +5611,7 @@ class SidebandApp(MDApp):
             self.map_settings_screen = Builder.load_string(layout_map_settings_screen)
             self.map_settings_screen.app = self
             self.root.ids.screen_manager.add_widget(self.map_settings_screen)
-            self.map_settings_screen.ids.map_config_info.text = "\n\nSideband can use map sources from the Internet, or a map source stored locally on this device in MBTiles format."
+            self.map_settings_screen.ids.map_config_info.text = "\n\nopenCom Companion can use map sources from the Internet, or a map source stored locally on this device in MBTiles format."
             self.map_settings_screen.ids.map_settings_scrollview.effect_cls = ScrollEffect
             self.map_settings_init()
 
@@ -5984,19 +5984,19 @@ class SidebandApp(MDApp):
                 threading.Thread(target=lj, daemon=True).start()
 
             guide_text1 = """
-[size=18dp][b]Introduction[/b][/size][size=5dp]\n \n[/size]Welcome to [i]Sideband[/i], an LXMF client for Android, Linux and macOS. With Sideband, you can communicate with other people or LXMF-compatible systems over Reticulum networks using LoRa, Packet Radio, WiFi, I2P, or anything else Reticulum supports.
+[size=18dp][b]Introduction[/b][/size][size=5dp]\n \n[/size]Welcome to [i]openCom Companion[/i], an LXMF client for Android, Linux and macOS. With openCom Companion, you can communicate with other people or LXMF-compatible systems over Reticulum networks using LoRa, Packet Radio, WiFi, I2P, or anything else Reticulum supports.
 
-This short guide will give you a basic introduction to the concepts that underpin Sideband and LXMF (which is the protocol that Sideband uses to communicate). If you are not already familiar with LXMF and Reticulum, it is probably a good idea to read this guide, since Sideband is very different from other messaging apps."""
+This short guide will give you a basic introduction to the concepts that underpin openCom Companion and LXMF (which is the protocol that openCom Companion uses to communicate). If you are not already familiar with LXMF and Reticulum, it is probably a good idea to read this guide, since openCom Companion is very different from other messaging apps."""
             guide_text2 = """
-[size=18dp][b]Communication Without Subjection[/b][/size][size=5dp]\n \n[/size]Sideband is completely free, permission-less, anonymous and infrastructure-less. Sideband uses the peer-to-peer and distributed messaging system LXMF. There is no sign-up, no service providers, no "end-user license agreements", no data theft and no surveillance. You own the system.
+[size=18dp][b]Communication Without Subjection[/b][/size][size=5dp]\n \n[/size]openCom Companion is completely free, permission-less, anonymous and infrastructure-less. openCom Companion uses the peer-to-peer and distributed messaging system LXMF. There is no sign-up, no service providers, no "end-user license agreements", no data theft and no surveillance. You own the system.
 
-This also means that Sideband operates differently than what you might be used to. It does not need a connection to a server on the Internet to function, and you do not have an account anywhere."""
+This also means that openCom Companion operates differently than what you might be used to. It does not need a connection to a server on the Internet to function, and you do not have an account anywhere."""
             
             guide_text3 = """
-[size=18dp][b]Operating Principles[/b][/size][size=5dp]\n \n[/size]When Sideband is started on your device for the first time, it randomly generates a set of cryptographic keys. These keys are then used to create an LXMF address for your use. Any other endpoint in [i]any[/i] Reticulum network will be able to send data to this address, as long as there is [i]some sort of physical connection[/i] between your device and the remote endpoint. You can also move around to other Reticulum networks with this address, even ones that were never connected to the network the address was created on, or that didn't exist when the address was created. The address is yours to keep and control for as long (or short) a time you need it, and you can always delete it and create a new one."""
+[size=18dp][b]Operating Principles[/b][/size][size=5dp]\n \n[/size]When openCom Companion is started on your device for the first time, it randomly generates a set of cryptographic keys. These keys are then used to create an LXMF address for your use. Any other endpoint in [i]any[/i] Reticulum network will be able to send data to this address, as long as there is [i]some sort of physical connection[/i] between your device and the remote endpoint. You can also move around to other Reticulum networks with this address, even ones that were never connected to the network the address was created on, or that didn't exist when the address was created. The address is yours to keep and control for as long (or short) a time you need it, and you can always delete it and create a new one."""
         
             guide_text4 = """
-[size=18dp][b]Becoming Reachable[/b][/size][size=5dp]\n \n[/size]To establish reachability for any Reticulum address on a network, an [i]announce[/i] must be sent. Sideband does not do this automatically by default, but can be configured to do so every time the program starts. To send an announce manually, press the [i]Announce[/i] button in the [i]Conversations[/i] section of the program. When you send an announce, you make your LXMF address reachable for real-time messaging to the entire network you are connected to. Even in very large networks, you can expect global reachability for your address to be established in under a minute.
+[size=18dp][b]Becoming Reachable[/b][/size][size=5dp]\n \n[/size]To establish reachability for any Reticulum address on a network, an [i]announce[/i] must be sent. openCom Companion does not do this automatically by default, but can be configured to do so every time the program starts. To send an announce manually, press the [i]Announce[/i] button in the [i]Conversations[/i] section of the program. When you send an announce, you make your LXMF address reachable for real-time messaging to the entire network you are connected to. Even in very large networks, you can expect global reachability for your address to be established in under a minute.
 
 If you don't move to other places in the network, and keep connected through the same hubs or gateways, it is generally not necessary to send an announce more often than once every week. If you change your entry point to the network, you may want to send an announce, or you may just want to stay quiet."""
 
@@ -6009,12 +6009,12 @@ The Propagation Nodes also distribute copies of messages between each other, suc
 [size=18dp][b]Packets Find A Way[/b][/size][size=5dp]\n \n[/size]Connections in Reticulum networks can be wired or wireless, span many intermediary hops, run over fast links or ultra-low bandwidth radio, tunnel over the Invisible Internet (I2P), private networks, satellite connections, serial lines or anything else that Reticulum can carry data over. In most cases it will not be possible to know what path data takes in a Reticulum network, and no transmitted packets carries any identifying characteristics, apart from a destination address. There is no source addresses in Reticulum. As long as you do not reveal any connecting details between your person and your LXMF address, you can remain anonymous. Sending messages to others does not reveal [i]your[/i] address to anyone else than the intended recipient."""
 
             guide_text7 = """
-[size=18dp][b]Be Yourself, Be Unknown, Stay Free[/b][/size][size=5dp]\n \n[/size]Even with the above characteristics in mind, you [b]must remember[/b] that LXMF and Reticulum is not a technology that can guarantee anonymising connections that are already de-anonymised! If you use Sideband to connect to TCP Reticulum hubs over the clear Internet, from a network that can be tied to your personal identity, an adversary may learn that you are generating LXMF traffic. If you want to avoid this, it is recommended to use I2P to connect to Reticulum hubs on the Internet. Or only connecting from within pure Reticulum networks, that take one or more hops to reach connections that span the Internet. This is a complex topic, with many more nuances than can be covered here. You are encouraged to ask on the various Reticulum discussion forums if you are in doubt.
+[size=18dp][b]Be Yourself, Be Unknown, Stay Free[/b][/size][size=5dp]\n \n[/size]Even with the above characteristics in mind, you [b]must remember[/b] that LXMF and Reticulum is not a technology that can guarantee anonymising connections that are already de-anonymised! If you use openCom Companion to connect to TCP Reticulum hubs over the clear Internet, from a network that can be tied to your personal identity, an adversary may learn that you are generating LXMF traffic. If you want to avoid this, it is recommended to use I2P to connect to Reticulum hubs on the Internet. Or only connecting from within pure Reticulum networks, that take one or more hops to reach connections that span the Internet. This is a complex topic, with many more nuances than can be covered here. You are encouraged to ask on the various Reticulum discussion forums if you are in doubt.
 
 If you use Reticulum and LXMF on hardware that does not carry any identifiers tied to you, it is possible to establish a completely free and anonymous communication system with Reticulum and LXMF clients."""
         
             guide_text8 = """
-[size=18dp][b]Keyboard Shortcuts[/b][/size][size=5dp]\n \n[/size]To ease navigation and operation of the program, Sideband has keyboard shortcuts mapped to the most common actions. A reference is included below.
+[size=18dp][b]Keyboard Shortcuts[/b][/size][size=5dp]\n \n[/size]To ease navigation and operation of the program, openCom Companion has keyboard shortcuts mapped to the most common actions. A reference is included below.
 
 [b]Quick Actions[/b]
  - [b]Ctrl-W[/b] Go back
@@ -6054,7 +6054,7 @@ If you use Reticulum and LXMF on hardware that does not carry any identifiers ti
  - Hold [b]Alt[/b] to navigate more finely"""
 
             guide_text9 = """
-[size=18dp][b]Please Support This Project[/b][/size][size=5dp]\n \n[/size]It took me more than seven years to design and built the entire ecosystem of software and hardware that makes this possible. If this project is valuable to you, please go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project with a donation. Every donation directly makes the entire Reticulum project possible.
+[size=18dp][b]Please Support The Upstream Project[/b][/size][size=5dp]\n \n[/size]It took Mark Qvist more than seven years to design and built the entire ecosystem of software and hardware that supports openCom Companion and the openCom line of RNodes. If this project is valuable to you, please go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support his project with a donation. Every donation directly makes the entire Reticulum project possible.
 
 Thank you very much for using Free Communications Systems.
 """
@@ -6113,7 +6113,7 @@ Thank you very much for using Free Communications Systems.
             self.root.ids.screen_manager.transition = self.slide_transition
             self.root.ids.screen_manager.transition.direction = direction
 
-        info = "The [b]Local Broadcasts[/b] feature will allow you to send and listen for local broadcast transmissions on connected radio, LoRa and WiFi interfaces.\n\n[b]Local Broadcasts[/b] makes it easy to establish public information exchange with anyone in direct radio range, or even with large areas far away using the [i]Remote Broadcast Repeater[/i] feature.\n\nThese features are not yet implemented in Sideband.\n\nWant it faster? Go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project."
+        info = "The [b]Local Broadcasts[/b] feature will allow you to send and listen for local broadcast transmissions on connected radio, LoRa and WiFi interfaces.\n\n[b]Local Broadcasts[/b] makes it easy to establish public information exchange with anyone in direct radio range, or even with large areas far away using the [i]Remote Broadcast Repeater[/i] feature.\n\nThese features are not yet implemented in openCom Companion.\n\nWant it faster? Go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project."
         if self.theme_cls.theme_style == "Dark":
             info = "[color=#"+dark_theme_text_color+"]"+info+"[/color]"
         self.broadcasts_screen.ids.broadcasts_info.text = info
@@ -6165,7 +6165,7 @@ if not args.daemon:
 
 def run():
     if args.daemon:
-        RNS.log("Starting Sideband in daemon mode")
+        RNS.log("Starting openCom Companion in daemon mode")
         sideband = SidebandCore(
             None,
             config_path=args.config,

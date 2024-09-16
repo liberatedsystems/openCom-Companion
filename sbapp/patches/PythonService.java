@@ -130,7 +130,7 @@ public class PythonService extends Service implements Runnable {
         } else {
             // for android 8+ we need to create our own channel
             // https://stackoverflow.com/questions/47531742/startforeground-fail-after-upgrade-to-android-8-1
-            String NOTIFICATION_CHANNEL_ID = "io.unsigned.sideband.reticulum";
+            String NOTIFICATION_CHANNEL_ID = "uk.co.liberatedsystems.occ.reticulum";
             String channelName = "Background Service";
             NotificationChannel chan = new NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName, 
                 NotificationManager.IMPORTANCE_NONE);
@@ -142,7 +142,7 @@ public class PythonService extends Service implements Runnable {
             manager.createNotificationChannel(chan);
 
             Notification.Builder builder = new Notification.Builder(context, NOTIFICATION_CHANNEL_ID);
-            builder.setContentTitle("Sideband Active");
+            builder.setContentTitle("openCom Companion Active");
             // builder.setContentText("Reticulum Active");
             builder.setContentIntent(pIntent);
             // builder.setOngoing(true);
