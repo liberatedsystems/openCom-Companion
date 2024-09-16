@@ -3951,6 +3951,16 @@ class SidebandApp(MDApp):
             self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_preset_next,False)
             self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg,False)
             self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_advanced_cfg_label,False)
+
+            if self.sideband.config["hw_rnode_sec_advanced_cfg"]:
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency,False)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth,False)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower,False)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor,False)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate,False)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_airtime_label,False)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short,False)
+                self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long,False)
         else:
             self.sideband.config["hw_rnode_secondary_modem"] = False
             self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel,True)
