@@ -91,7 +91,7 @@ install:
 	adb install bin/occ-$$(python ./gv.py)-arm64-v8a_armeabi-v7a-release.apk
 
 console:
-	(adb logcat | grep "python\|occservice")
+	(adb logcat | grep "python\|sidebandservice")
 
 getrns:
 	(cp -rv ../../Reticulum/RNS ./)
