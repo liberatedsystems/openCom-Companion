@@ -347,15 +347,14 @@ class SidebandService():
                     if type(self.sideband.interface_rnode) is RNS.Interfaces.Android.RNodeMultiInterface.RNodeMultiInterface:
                         rs = ""
                         for subinterface in self.sideband.interface_rnode.subinterfaces:
-                            if subinterface is not int:
-                                rs += "On-air at "+str(subinterface.bitrate_kbps)+" Kbps \n" # \todo does this work?
-                                RNS.log("On-air iteration!", RNS.LOG_DEBUG) # debug
+                            if type(subinterface) is not int:
+                                rs += subinterface.name + ": " + "On-air at "+str(subinterface.bitrate_kbps)+" Kbps \n"
                     else:
                         rs = "On-air at "+str(self.sideband.interface_rnode.bitrate_kbps)+" Kbps"
                 else:
                     rs = "Interface Down"
 
-                stat += "[b]RNode[/b]\n{rs}\n\n".format(rs=rs)
+                stat += "[b]openCom device[/b]\n{rs}\n\n".format(rs=rs)
 
             if self.sideband.interface_modem != None:
                 if self.sideband.interface_modem.online:
