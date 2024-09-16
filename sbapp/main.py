@@ -3831,7 +3831,7 @@ class SidebandApp(MDApp):
             primary_modem = True
 
         elif caller == self.hardware_rnode_screen.ids.hardware_rnode_preset_next:
-            self.sideband.config.hw_rnode_preset_index += 1
+            self.sideband.config["hw_rnode_preset_index"] += 1
             if self.sideband.config["hw_rnode_preset_index"] >= len(self.sideband.config["hw_rnode_channels"].keys()):
                 self.sideband.config["hw_rnode_preset_index"] = len(self.sideband.config["hw_rnode_channels"].keys()) - 1
             preset = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_preset_index"]]
