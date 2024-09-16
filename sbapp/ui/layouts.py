@@ -475,7 +475,7 @@ MDScreen:
                     
                     MDLabel:
                         id: connectivity_rnode_label
-                        text: "Connect via RNode"
+                        text: "Connect via openCom device"
                         font_style: "H6"
                         disabled: False
 
@@ -718,7 +718,7 @@ MDScreen:
 
                         MDTextField:
                             id: connectivity_rnode_ifmode
-                            hint_text: "RNode Mode"
+                            hint_text: "openCom device Mode"
                             text: ""
                             font_size: dp(24)
 
@@ -1959,7 +1959,7 @@ MDScreen:
                     MDRectangleFlatIconButton:
                         id: hardware_rnode_button
                         icon: "radio-handheld"
-                        text: "RNode"
+                        text: "openCom device"
                         padding: [dp(0), dp(14), dp(0), dp(14)]
                         icon_size: dp(24)
                         font_size: dp(16)
@@ -2145,7 +2145,7 @@ MDScreen:
         orientation: "vertical"
 
         MDTopAppBar:
-            title: "RNode"
+            title: "openCom device"
             anchor_title: "left"
             elevation: 0
             left_action_items:
@@ -2166,13 +2166,13 @@ MDScreen:
                 padding: [dp(28), dp(48), dp(28), dp(16)]
 
                 MDLabel:
-                    text: "RNode Hardware Parameters\\n"
+                    text: "openCom Device Hardware Parameters\\n"
                     font_style: "H6"
 
                 MDLabel:
                     id: hardware_rnode_info
                     markup: True
-                    text: "To communicate using an RNode, you will need to specify the following parameters. For two or more RNodes to be able to communicate, all parameters must match, except for the [i]Coding Rate[/i] and [i]TX Power[/i] parameter, which can vary between devices.\\n"
+                    text: "To communicate using an openCom device (for example, the openCom XL), you can choose from the below options to customise the frequency channel and the communication preset. For two or more openCom devices to be able to communicate, all parameters must match, except for the [i]Coding Rate[/i] and [i]TX Power[/i] parameter, which can vary between devices. openCom devices are also capable of communicating with RNodes. You can select [i]Advanced Configuration[/i] to configure the modulation parameters for your device yourself, if you so wish. [b]Please enable [i]Configure Secondary Modem[/i] to use both modems if you are using an openCom XL[/b].\\n"
                     size_hint_y: None
                     text_size: self.width, None
                     height: self.texture_size[1]
@@ -2520,7 +2520,7 @@ MDScreen:
                     height: dp(48)
                     
                     MDLabel:
-                        text: "Control RNode Display"
+                        text: "Control openCom Device Display"
                         font_style: "H6"
 
                     MDSwitch:
@@ -2546,7 +2546,7 @@ MDScreen:
                 MDLabel:
                     id: hardware_rnode_info
                     markup: True
-                    text: "If you enable connection via Bluetooth, Sideband will attempt to connect to any available and paired RNodes over Bluetooth.\\n\\nYou must first pair the RNode with your device for this to work. If your RNode does not have a physical pairing button, you can enable Bluetooth and put it into pairing mode by first connecting it via a USB cable, and using the buttons below. When plugging in the RNode over USB, you must grant Sideband permission to the USB device for this to work.\\n\\nYou can also change Bluetooth settings using the \\"rnodeconf\\" utility from a computer.\\n\\nBy default, Sideband will connect to the first available RNode that is paired. If you want to always use a specific RNode, you can enter its name in the Preferred RNode Device Name field below, for example \\"RNode A8EB\\".\\n"
+                    text: "If you enable connection via Bluetooth, openCom Companion will attempt to connect to any available and paired openCom devices over Bluetooth.\\n\\nYou must first pair the openCom device with your Android device for this to work. Details on how to pair via Bluetooth will be available in the manual that came with your openCom device. \\nYou can also change Bluetooth settings using the \\"rnodeconf\\" utility from a computer.\\n\\nBy default, openCom Companion will connect to the first available openCom device that is paired. If you want to always use a specific openCom device, you can enter its name in the Preferred openCom Device Name field below, for example \\"openCom XL A8EB\\".\\n"
                     size_hint_y: None
                     text_size: self.width, None
                     height: self.texture_size[1]
@@ -2558,41 +2558,41 @@ MDScreen:
                     height: self.minimum_height
                     # padding: [dp(0), dp(0), dp(0), dp(35)]
 
-                    MDRectangleFlatIconButton:
-                        id: hardware_rnode_bt_on_button
-                        icon: "bluetooth"
-                        text: "Enable Bluetooth"
-                        padding: [dp(0), dp(14), dp(0), dp(14)]
-                        icon_size: dp(24)
-                        font_size: dp(16)
-                        size_hint: [1.0, None]
-                        on_release: root.app.hardware_rnode_bt_on_action(self)
+                    #MDRectangleFlatIconButton:
+                    #    id: hardware_rnode_bt_on_button
+                    #    icon: "bluetooth"
+                    #    text: "Enable Bluetooth"
+                    #    padding: [dp(0), dp(14), dp(0), dp(14)]
+                    #    icon_size: dp(24)
+                    #    font_size: dp(16)
+                    #    size_hint: [1.0, None]
+                    #    on_release: root.app.hardware_rnode_bt_on_action(self)
 
-                    MDRectangleFlatIconButton:
-                        id: hardware_rnode_bt_off_button
-                        icon: "bluetooth-off"
-                        text: "Disable Bluetooth"
-                        padding: [dp(0), dp(14), dp(0), dp(14)]
-                        icon_size: dp(24)
-                        font_size: dp(16)
-                        size_hint: [1.0, None]
-                        on_release: root.app.hardware_rnode_bt_off_action(self)
-                        disabled: False
+                    #MDRectangleFlatIconButton:
+                    #    id: hardware_rnode_bt_off_button
+                    #    icon: "bluetooth-off"
+                    #    text: "Disable Bluetooth"
+                    #    padding: [dp(0), dp(14), dp(0), dp(14)]
+                    #    icon_size: dp(24)
+                    #    font_size: dp(16)
+                    #    size_hint: [1.0, None]
+                    #    on_release: root.app.hardware_rnode_bt_off_action(self)
+                    #    disabled: False
 
-                    MDRectangleFlatIconButton:
-                        id: hardware_rnode_bt_pair_button
-                        icon: "link-variant"
-                        text: "Start Pairing Mode"
-                        padding: [dp(0), dp(14), dp(0), dp(14)]
-                        icon_size: dp(24)
-                        font_size: dp(16)
-                        size_hint: [1.0, None]
-                        on_release: root.app.hardware_rnode_bt_pair_action(self)
-                        disabled: False
+                    #MDRectangleFlatIconButton:
+                    #    id: hardware_rnode_bt_pair_button
+                    #    icon: "link-variant"
+                    #    text: "Start Pairing Mode"
+                    #    padding: [dp(0), dp(14), dp(0), dp(14)]
+                    #    icon_size: dp(24)
+                    #    font_size: dp(16)
+                    #    size_hint: [1.0, None]
+                    #    on_release: root.app.hardware_rnode_bt_pair_action(self)
+                    #    disabled: False
 
                     MDTextField:
                         id: hardware_rnode_bt_device
-                        hint_text: "Preferred RNode Device Name"
+                        hint_text: "Preferred openCom Device Name"
                         text: ""
                         font_size: dp(24)
 """
