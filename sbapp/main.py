@@ -3807,6 +3807,9 @@ class SidebandApp(MDApp):
             if self.sideband.config["hw_rnode_channel_index"] == 4:
                 # Change bandwidth on channel 5 to 250kHz due to le epic ofcom regulation
                 self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text = str(250000 / 1000)
+            else:
+                preset = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_preset_index"]]
+                self.hardware_rnode_load_preset(preset, primary_modem)
         else:
             self.hardware_rnode_screen.ids.hardware_rnode_sec_channel.text = channel
 
