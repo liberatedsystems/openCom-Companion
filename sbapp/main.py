@@ -2260,7 +2260,7 @@ class SidebandApp(MDApp):
             
             dialog = MDDialog(
                 title="Ingest Paper Message",
-                text="You can read LXMF paper messages into this program by scanning a QR-code containing the message with your device camera or QR-scanner app, and then opening the resulting link in Sideband.\n\nAlternatively, you can copy an [b]lxm://[/b] link from any source to your clipboard, and ingest it using the [i]Read LXM[/i] button below.",
+                text="You can read LXMF paper messages into this program by scanning a QR-code containing the message with your device camera or QR-scanner app, and then opening the resulting link in openCom Companion.\n\nAlternatively, you can copy an [b]lxm://[/b] link from any source to your clipboard, and ingest it using the [i]Read LXM[/i] button below.",
                 buttons=[ ingest_button, cancel_button ],
             )
             def dl_yes(s):
@@ -3141,7 +3141,7 @@ class SidebandApp(MDApp):
                 else:
                     info =  "By default, openCom Companion will try to discover and connect to any available Reticulum networks via active WiFi and/or Ethernet interfaces. If any Reticulum Transport Instances are found, openCom Companion will use these to connect to wider Reticulum networks. You can disable this behaviour if you don't want it.\n\n"
                     info += "You can also connect to a network via a remote or local Reticulum instance using TCP or I2P. [b]Please Note![/b] Connecting via I2P requires that you already have I2P running on your device, and that the SAM API is enabled.\n\n"
-                    info += "For changes to connectivity to take effect, you must shut down and restart Sideband.\n"
+                    info += "For changes to connectivity to take effect, you must shut down and restart openCom Companion.\n"
                     self.connectivity_screen.ids.connectivity_info.text = info
 
                     self.connectivity_screen.ids.connectivity_use_local.active = self.sideband.config["connect_local"]
@@ -3493,7 +3493,7 @@ class SidebandApp(MDApp):
                 else:
                     info =  "When using external hardware for communicating, you may configure various parameters, such as channel settings, modulation schemes, interface speeds and access parameters. You can set up these parameters per device type, and openCom Companion will apply the configuration when opening a device of that type.\n\n"
                     info += "Hardware configurations can also be exported or imported as [i]config motes[/i], which are self-contained plaintext strings that are easy to share with others. When importing a config mote, openCom Companion will automatically set all relevant parameters as specified within it.\n\n"
-                    info += "For changes to hardware parameters to take effect, you must shut down and restart Sideband.\n"
+                    info += "For changes to hardware parameters to take effect, you must shut down and restart openCom Companion.\n"
                     self.hardware_screen.ids.hardware_info.text = info
 
             else:
@@ -4936,7 +4936,7 @@ class SidebandApp(MDApp):
     def identity_restore_action(self, sender=None):
         c_yes_button = MDRectangleFlatButton(text="Yes",font_size=dp(18), theme_text_color="Custom", line_color=self.color_reject, text_color=self.color_reject)
         c_no_button = MDRectangleFlatButton(text="No, go back",font_size=dp(18))
-        c_dialog = MDDialog(text="[b]Caution![/b]\n\nYou are about to import a new Identity key into Sideband. The currently active key will be irreversibly destroyed, and you will loose your LXMF address if you have not already backed up your current Identity key.\n\nAre you sure that you wish to import the key?", buttons=[ c_no_button, c_yes_button ])
+        c_dialog = MDDialog(text="[b]Caution![/b]\n\nYou are about to import a new Identity key into openCom Companion. The currently active key will be irreversibly destroyed, and you will loose your LXMF address if you have not already backed up your current Identity key.\n\nAre you sure that you wish to import the key?", buttons=[ c_no_button, c_yes_button ])
         def c_dl_no(s):
             c_dialog.dismiss()
         def c_dl_yes(s):
@@ -4960,7 +4960,7 @@ class SidebandApp(MDApp):
 
             except Exception as e:
                 yes_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
-                dialog = MDDialog(text="[b]The provided Identity key data was not valid[/b]\n\nThe error reported by Reticulum was:\n\n[i]"+str(e)+"[/i]\n\nNo Identity was imported into Sideband.", buttons=[ yes_button ])
+                dialog = MDDialog(text="[b]The provided Identity key data was not valid[/b]\n\nThe error reported by Reticulum was:\n\n[i]"+str(e)+"[/i]\n\nNo Identity was imported into openCom Companion.", buttons=[ yes_button ])
                 def dl_yes(s):
                     dialog.dismiss()
                 yes_button.bind(on_release=dl_yes)
@@ -6026,45 +6026,7 @@ The Propagation Nodes also distribute copies of messages between each other, suc
 
 If you use Reticulum and LXMF on hardware that does not carry any identifiers tied to you, it is possible to establish a completely free and anonymous communication system with Reticulum and LXMF clients."""
         
-            guide_text8 = """
-[size=18dp][b]Keyboard Shortcuts[/b][/size][size=5dp]\n \n[/size]To ease navigation and operation of the program, openCom Companion has keyboard shortcuts mapped to the most common actions. A reference is included below.
-
-[b]Quick Actions[/b]
- - [b]Ctrl-W[/b] Go back
- - [b]Ctrl+Q[/b] Shut down Sideband
- - [b]Ctrl-R[/b] Start LXMF sync (from Conversations screen)
- - [b]Ctrl-N[/b] Create new conversation
- 
- [b]Message Actions[/b]
- - [b]Ctrl-Shift-A[/b] add message attachment
- - [b]Ctrl-Shift-V[/b] add high-quality voice
- - [b]Ctrl-Shift-C[/b] add low-bandwidth voice
- - [b]Ctrl-Shift-I[/b] add medium-quality image
- - [b]Ctrl-Shift-F[/b] add file
- - [b]Ctrl-D[/b] or [b]Ctrl-S[/b] Send message
-
- [b]Voice Recording[/b]
- - [b]Space[/b] Start/stop recording
- - [b]Enter[/b] Save recording to message
-
- [b]Navigation[/b]
- - [b]Ctrl-[i]n[/i][/b] Go to conversation number [i]n[/i]
- - [b]Ctrl-R[/b] Go to Conversations
- - [b]Ctrl-O[/b] Go to Objects & Devices
- - [b]Ctrl-L[/b] Go to Announce Stream
- - [b]Ctrl-M[/b] Go to Situation Map
- - [b]Ctrl-T[/b] Go to Telemetry configuration
- - [b]Ctrl-G[/b] Go to Guide
- - [b]Ctrl-U[/b] Display own telemetry
-
-[b]Map Controls[/b]
- - [b]Up[/b], [b]down[/b], [b]left[/b], [b]right[/b] Navigate
- - [b]W[/b], [b]A[/b], [b]S[/b], [b]D[/b] Navigate
- - [b]H[/b], [b]J[/b], [b]L[/b], [b]K[/b] Navigate
- - [b]E[/b] or [b]+[/b] Zoom in
- - [b]Q[/b] or [b]-[/b] Zoom out
- - Hold [b]Shift[/b] to navigate more coarsely
- - Hold [b]Alt[/b] to navigate more finely"""
+            guide_text8 = """"""
 
             guide_text9 = """
 [size=18dp][b]Please Support The Upstream Project[/b][/size][size=5dp]\n \n[/size]It took Mark Qvist more than seven years to design and built the entire ecosystem of software and hardware that supports openCom Companion and the openCom line of RNodes. If this project is valuable to you, please go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support his project with a donation. Every donation directly makes the entire Reticulum project possible.
