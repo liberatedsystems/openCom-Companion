@@ -3681,19 +3681,19 @@ class SidebandApp(MDApp):
             else:
                 try:
                     if self.sideband.config["hw_rnode_sec_preset"] in self.sideband.config["hw_rnode_presets"]:
-                        index = self.sideband.config["hw_rnode_sec_presets"].index(self.sideband.config["hw_rnode_preset"])
+                        index = self.sideband.config["hw_rnode_presets"].index(self.sideband.config["hw_rnode_sec_preset"])
 
-                        self.sideband.config["hw_rnode_sec_bandwidth"] = self.sideband.config["hw_rnode_presets_cfg"][index][0]
-                        self.sideband.config["hw_rnode_sec_spreading_factor"] = self.sideband.config["hw_rnode_presets_cfg"][index][1]
-                        self.sideband.config["hw_rnode_sec_coding_rate"] = self.sideband.config["hw_rnode_presets_cfg"][index][2]
+                        self.sideband.config["hw_rnode_sec_bandwidth"] = self.sideband.config["hw_rnode_sec_presets_cfg"][index][0]
+                        self.sideband.config["hw_rnode_sec_spreading_factor"] = self.sideband.config["hw_rnode_sec_presets_cfg"][index][1]
+                        self.sideband.config["hw_rnode_sec_coding_rate"] = self.sideband.config["hw_rnode_sec_presets_cfg"][index][2]
 
                         if self.sideband.config["hw_rnode_sec_presets_cfg"][index][3] != 100:
-                            self.sideband.config["hw_rnode_sec_atl_short"] = self.sideband.config["hw_rnode_presets_cfg"][index][3]
+                            self.sideband.config["hw_rnode_sec_atl_short"] = self.sideband.config["hw_rnode_sec_presets_cfg"][index][3]
                         else:
                             self.sideband.config["hw_rnode_sec_atl_short"] = None
 
                         if self.sideband.config["hw_rnode_sec_presets_cfg"][index][4] != 100:
-                            self.sideband.config["hw_rnode_sec_atl_long"] = self.sideband.config["hw_rnode_presets_cfg"][index][4]
+                            self.sideband.config["hw_rnode_sec_atl_long"] = self.sideband.config["hw_rnode_sec_presets_cfg"][index][4]
                         else:
                             self.sideband.config["hw_rnode_sec_atl_long"] = None
 
@@ -3701,10 +3701,10 @@ class SidebandApp(MDApp):
                     RNS.log("Error while configuring secondary modem preset parameters: "+str(e), RNS.LOG_ERROR)
 
                 # Temporary until dropdown for frequencies added
-                try:
-                    self.sideband.config["hw_rnode_sec_frequency"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency.text)*1000000)
-                except:
-                    pass
+                #try:
+                #    self.sideband.config["hw_rnode_sec_frequency"] = int(float(self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency.text)*1000000)
+                #except:
+                #    pass
                 try:
                     self.sideband.config["hw_rnode_sec_tx_power"] = int(self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower.text)
                 except:
@@ -3800,6 +3800,7 @@ class SidebandApp(MDApp):
             channel = list(self.sideband.config["hw_rnode_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
             primary_modem = False
 
+
         RNS.log("Setting channel to: " + channel,RNS.LOG_DEBUG)
 
         if primary_modem:
@@ -3808,6 +3809,7 @@ class SidebandApp(MDApp):
                 # Change bandwidth on channel 5 to 250kHz due to le epic ofcom regulation
                 self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text = str(250000 / 1000)
             else:
+                # Change it back if channel is changed
                 preset = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_preset_index"]]
                 self.hardware_rnode_load_preset(preset, primary_modem)
         else:
@@ -3943,8 +3945,12 @@ class SidebandApp(MDApp):
 
         self.sideband.save_configuration()
 
-    def hardware_rnode_secondary_modem_toggle_action(self, sender=None, event=None):
-        if sender.active:
+    def hardware_rnode_secondary_modem_toggle_action(self, sender=None, event=None, override=None):
+        try:
+            active = sender.active
+        except:
+            active = False
+        if active or override:
             self.sideband.config["hw_rnode_secondary_modem"] = True
             self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel,False)
             self.widget_hide(self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_dec,False)
@@ -4292,11 +4298,35 @@ class SidebandApp(MDApp):
 
         try:
             config = msgpack.unpackb(base64.b32decode(mote))
+            self.sideband.config["hw_rnode_channel_index"]                      = config["w"]
+            self.sideband.config["hw_rnode_preset_index"]                      = config["q"]
+            self.hardware_rnode_screen.ids.hardware_rnode_channel.text          = list(self.sideband.config["hw_rnode_channels"].keys())[self.sideband.config["hw_rnode_channel_index"]]
+            self.hardware_rnode_screen.ids.hardware_rnode_preset.text          = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_preset_index"]]
             self.hardware_rnode_screen.ids.hardware_rnode_frequency.text        = str(config["f"]/1000000.0)
             self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text        = str(config["b"]/1000.0)
             self.hardware_rnode_screen.ids.hardware_rnode_txpower.text          = str(config["t"])
             self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.text  = str(config["s"])
             self.hardware_rnode_screen.ids.hardware_rnode_codingrate.text       = str(config["c"])
+            self.hardware_rnode_screen.ids.hardware_rnode_atl_short.text       = str(config["k"])
+            self.hardware_rnode_screen.ids.hardware_rnode_atl_long.text       = str(config["m"])
+
+            if bool(config["a"]):
+                # Secondary modem enabled
+                self.hardware_rnode_secondary_modem_toggle_action(override=True)
+                self.sideband.config["hw_rnode_sec_channel_index"]                  = config["ws"]
+                self.sideband.config["hw_rnode_sec_preset_index"]                   = config["qs"]
+                self.hardware_rnode_screen.ids.hardware_rnode_channel.text          = list(self.sideband.config["hw_rnode_sec_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
+                self.hardware_rnode_screen.ids.hardware_rnode_preset.text          = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_sec_preset_index"]]
+                self.hardware_rnode_screen.ids.hardware_rnode_frequency.text        = str(config["fs"]/1000000.0)
+                self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text        = str(config["bs"]/1000.0)
+                self.hardware_rnode_screen.ids.hardware_rnode_txpower.text          = str(config["ts"])
+                self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.text  = str(config["ss"])
+                self.hardware_rnode_screen.ids.hardware_rnode_codingrate.text       = str(config["cs"])
+                self.hardware_rnode_screen.ids.hardware_rnode_atl_short.text        = str(config["ks"])
+                self.hardware_rnode_screen.ids.hardware_rnode_atl_long.text         = str(config["ms"])
+
+            else:
+                self.hardware_rnode_secondary_modem_toggle_action()
             
             if "n" in config and config["n"] != None:
                 ifn = str(config["n"])
@@ -4307,9 +4337,9 @@ class SidebandApp(MDApp):
             else:
                 ifp = ""
 
-            self.connectivity_screen.ids.connectivity_rnode_ifac_netname.text    = ifn
+            #self.connectivity_screen.ids.connectivity_rnode_ifac_netname.text    = ifn # error
             self.sideband.config["connect_rnode_ifac_netname"]             = ifn
-            self.connectivity_screen.ids.connectivity_rnode_ifac_passphrase.text = ifp
+            #self.connectivity_screen.ids.connectivity_rnode_ifac_passphrase.text = ifp # error
             self.sideband.config["connect_rnode_ifac_passphrase"]          = ifp
 
             if config["i"] != None:
@@ -4356,11 +4386,25 @@ class SidebandApp(MDApp):
         mote = None
         try:
             mote = base64.b32encode(msgpack.packb({
+                "w": self.sideband.config["hw_rnode_channel_index"],
+                "q": self.sideband.config["hw_rnode_preset_index"],
                 "f": self.sideband.config["hw_rnode_frequency"],
                 "b": self.sideband.config["hw_rnode_bandwidth"],
                 "t": self.sideband.config["hw_rnode_tx_power"],
                 "s": self.sideband.config["hw_rnode_spreading_factor"],
                 "c": self.sideband.config["hw_rnode_coding_rate"],
+                "k": self.sideband.config["hw_rnode_atl_short"],
+                "m": self.sideband.config["hw_rnode_atl_long"],
+                "a": self.sideband.config["hw_rnode_secondary_modem"],
+                "ws": self.sideband.config["hw_rnode_sec_channel_index"],
+                "qs": self.sideband.config["hw_rnode_sec_preset_index"],
+                "fs": self.sideband.config["hw_rnode_sec_frequency"],
+                "bs": self.sideband.config["hw_rnode_sec_bandwidth"],
+                "ts": self.sideband.config["hw_rnode_sec_tx_power"],
+                "ss": self.sideband.config["hw_rnode_sec_spreading_factor"],
+                "cs": self.sideband.config["hw_rnode_sec_coding_rate"],
+                "ks": self.sideband.config["hw_rnode_sec_atl_short"],
+                "ms": self.sideband.config["hw_rnode_sec_atl_long"],
                 "i": self.sideband.config["hw_rnode_beaconinterval"],
                 "d": self.sideband.config["hw_rnode_beacondata"],
                 "n": self.sideband.config["connect_rnode_ifac_netname"],
