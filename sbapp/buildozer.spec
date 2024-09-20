@@ -42,7 +42,7 @@ android.archs = arm64-v8a,armeabi-v7a
 
 android.add_gradle_repositories = "flatDir { dirs('../../../../../../patches') }"
 
-services = sidebandservice:services/sidebandservice.py:foreground
+services = occservice:services/occservice.py:foreground
 android.whitelist = lib-dynload/termios.so
 android.manifest.intent_filters = patches/intent-filter.xml
 
