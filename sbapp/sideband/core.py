@@ -449,6 +449,7 @@ class SidebandCore():
                 "Channel 2": 2402.8125,  # MHz
                 "Channel 3": 2404.8125,  # MHz
                 "Channel 4": 2406.8125,  # MHz
+                "Channel 5": 2408.8125,  # MHz
         }
         channel_keys = sorted(self.config["hw_rnode_sec_channels"].keys())
         self.config["hw_rnode_sec_channel_index"] = 0
@@ -456,10 +457,10 @@ class SidebandCore():
         self.config["hw_rnode_sec_frequency"] = self.config["hw_rnode_sec_channels"]["Channel 1"] * 1000000
         self.config["hw_rnode_sec_modulation"] = "LoRa"
         self.config["hw_rnode_sec_preset_index"] = 0
-        self.config["hw_rnode_sec_bandwidth"] = self.config["hw_rnode_presets_cfg"][0][0]
-        self.config["hw_rnode_sec_spreading_factor"] = self.config["hw_rnode_presets_cfg"][0][1]
-        self.config["hw_rnode_sec_coding_rate"] = self.config["hw_rnode_presets_cfg"][0][2]
-        self.config["hw_rnode_tx_power"] = 5
+        self.config["hw_rnode_sec_bandwidth"] = self.config["hw_rnode_sec_presets_cfg"][0][0]
+        self.config["hw_rnode_sec_spreading_factor"] = self.config["hw_rnode_sec_presets_cfg"][0][1]
+        self.config["hw_rnode_sec_coding_rate"] = self.config["hw_rnode_sec_presets_cfg"][0][2]
+        self.config["hw_rnode_sec_tx_power"] = 5
         self.config["hw_rnode_beaconinterval"] = None
         self.config["hw_rnode_beacondata"] = None
         self.config["hw_rnode_bt_device"] = None

@@ -4315,15 +4315,15 @@ class SidebandApp(MDApp):
                 self.hardware_rnode_secondary_modem_toggle_action(override=True)
                 self.sideband.config["hw_rnode_sec_channel_index"]                  = config["ws"]
                 self.sideband.config["hw_rnode_sec_preset_index"]                   = config["qs"]
-                self.hardware_rnode_screen.ids.hardware_rnode_channel.text          = list(self.sideband.config["hw_rnode_sec_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
-                self.hardware_rnode_screen.ids.hardware_rnode_preset.text          = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_sec_preset_index"]]
-                self.hardware_rnode_screen.ids.hardware_rnode_frequency.text        = str(config["fs"]/1000000.0)
-                self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text        = str(config["bs"]/1000.0)
-                self.hardware_rnode_screen.ids.hardware_rnode_txpower.text          = str(config["ts"])
-                self.hardware_rnode_screen.ids.hardware_rnode_spreadingfactor.text  = str(config["ss"])
-                self.hardware_rnode_screen.ids.hardware_rnode_codingrate.text       = str(config["cs"])
-                self.hardware_rnode_screen.ids.hardware_rnode_atl_short.text        = str(config["ks"])
-                self.hardware_rnode_screen.ids.hardware_rnode_atl_long.text         = str(config["ms"])
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_channel.text          = list(self.sideband.config["hw_rnode_sec_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_preset.text          = self.sideband.config["hw_rnode_presets"][self.sideband.config["hw_rnode_sec_preset_index"]]
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_frequency.text        = str(config["fs"]/1000000.0)
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_bandwidth.text        = str(config["bs"]/1000.0)
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_txpower.text          = str(config["ts"])
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_spreadingfactor.text  = str(config["ss"])
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_codingrate.text       = str(config["cs"])
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_short.text        = str(config["ks"])
+                self.hardware_rnode_screen.ids.hardware_rnode_sec_atl_long.text         = str(config["ms"])
 
             else:
                 self.hardware_rnode_secondary_modem_toggle_action()
