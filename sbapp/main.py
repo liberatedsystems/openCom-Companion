@@ -373,7 +373,7 @@ class SidebandApp(MDApp):
 
         RNS.log("Launching platform-specific service for RNS and LXMF")
         if RNS.vendor.platformutils.get_platform() == "android":
-            self.android_service = autoclass('uk.co.liberatedsystems.occ.ServiceSidebandservice')
+            self.android_service = autoclass('uk.co.liberatedsystems.occ.ServiceOccservice')
             mActivity = autoclass('org.kivy.android.PythonActivity').mActivity
             argument = self.app_dir
             self.android_service.start(mActivity, argument)
