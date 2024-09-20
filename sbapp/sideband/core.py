@@ -96,9 +96,9 @@ class SidebandCore():
     TELEMETRY_INTERVAL = 60
     SERVICE_TELEMETRY_INTERVAL = 300
 
-    IF_CHANGE_ANNOUNCE_MIN_INTERVAL = 6    # In seconds
+    IF_CHANGE_ANNOUNCE_MIN_INTERVAL = 3.5  # In seconds
     AUTO_ANNOUNCE_RANDOM_MIN        = 90   # In minutes
-    AUTO_ANNOUNCE_RANDOM_MAX        = 480  # In minutes
+    AUTO_ANNOUNCE_RANDOM_MAX        = 300  # In minutes
 
     DEFAULT_APPEARANCE = ["account", [0,0,0,1], [1,1,1,1]]
 
@@ -110,11 +110,12 @@ class SidebandCore():
         # This reformats the new v0.5.0 announce data back to the expected format
         # for Sidebands database and other handling functions.
         dn = LXMF.display_name_from_app_data(app_data)
+        sc = LXMF.stamp_cost_from_app_data(app_data)
         app_data = b""
         if dn != None:
             app_data = dn.encode("utf-8")
 
-        self.log_announce(destination_hash, app_data, dest_type=SidebandCore.aspect_filter)
+        self.log_announce(destination_hash, app_data, dest_type=SidebandCore.aspect_filter, stamp_cost=sc)
 
     def __init__(self, owner_app, config_path = None, is_service=False, is_client=False, android_app_dir=None, verbose=False, owner_service=None, service_context=None, is_daemon=False, load_config_only=False):
         self.is_service = is_service
@@ -154,6 +155,7 @@ class SidebandCore():
         self.service_stopped = False
         self.service_context = service_context
         self.owner_service = owner_service
+        self.allow_service_dispatch = True
         self.version_str = ""
 
         if config_path == None:
@@ -943,11 +945,12 @@ class SidebandCore():
                     else:
                         plyer.notification.notify(title, content, app_icon=self.icon_32)
 
-    def log_announce(self, dest, app_data, dest_type):
+    def log_announce(self, dest, app_data, dest_type, stamp_cost=None):
         try:
             if app_data == None:
                 app_data = b""
-            RNS.log("Received "+str(dest_type)+" announce for "+RNS.prettyhexrep(dest)+" with data: "+app_data.decode("utf-8"), RNS.LOG_DEBUG)
+            app_data = msgpack.packb([app_data, stamp_cost])
+            RNS.log("Received "+str(dest_type)+" announce for "+RNS.prettyhexrep(dest)+" with data: "+str(app_data), RNS.LOG_DEBUG)
             self._db_save_announce(dest, app_data, dest_type)
             self.setstate("app.flags.new_announces", True)
 
@@ -1142,9 +1145,11 @@ class SidebandCore():
             else:
                 app_data = RNS.Identity.recall_app_data(context_dest)
                 if app_data != None:
-                    return LXMF.display_name_from_app_data(app_data)+" "+RNS.prettyhexrep(context_dest)
+                    name_str = LXMF.display_name_from_app_data(app_data)
+                    addr_str = RNS.prettyhexrep(context_dest)
+                    return name_str+" "+addr_str
                 else:
-                    return RNS.prettyhexrep(context_dest)
+                    return "Anonymous Peer "+RNS.prettyhexrep(context_dest)
 
 
         except Exception as e:
@@ -1252,130 +1257,192 @@ class SidebandCore():
             else:
                 self.setstate(f"telemetry.{RNS.hexrep(message.destination_hash, delimit=False)}.request_sending", False)
 
+    def _service_request_latest_telemetry(self, from_addr=None):
+        if not RNS.vendor.platformutils.is_android():
+            return False
+        else:
+            if self.is_client:
+                try:
+                    if self.rpc_connection == None:
+                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
+
+                    self.rpc_connection.send({"request_latest_telemetry": {"from_addr": from_addr}})
+                    response = self.rpc_connection.recv()
+                    return response
+                
+                except Exception as e:
+                    RNS.log("Error while requesting latest telemetry over RPC: "+str(e), RNS.LOG_DEBUG)
+                    RNS.trace_exception(e)
+                    return False
+            else:
+                return False
 
     def request_latest_telemetry(self, from_addr=None):
-        if from_addr == None or from_addr == self.lxmf_destination.hash:
-            return "no_address"
-        else:
-            if self.getstate(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.request_sending") == True:
-                RNS.log("Not sending new telemetry request, since an earlier transfer is already in progress", RNS.LOG_DEBUG)
-                return "in_progress"
+        if self.allow_service_dispatch and self.is_client:
+            try:
+                return self._service_request_latest_telemetry(from_addr)
 
-            if from_addr != None:
-                dest_identity = RNS.Identity.recall(from_addr)
-                
-                if dest_identity == None:
-                    RNS.log("The identity for "+RNS.prettyhexrep(from_addr)+" could not be recalled. Requesting identity from network...", RNS.LOG_DEBUG)
-                    RNS.Transport.request_path(from_addr)
-                    return "destination_unknown"
-
-                else:
-                    now = time.time()
-                    dest = RNS.Destination(dest_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-                    source = self.lxmf_destination
-                    
-                    if self.config["telemetry_use_propagation_only"] == True:
-                        desired_method = LXMF.LXMessage.PROPAGATED
-                    else:
-                        desired_method = LXMF.LXMessage.DIRECT
-
-                    request_timebase = self.getpersistent(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.timebase") or now - self.telemetry_request_max_history
-                    lxm_fields = { LXMF.FIELD_COMMANDS: [
-                        {Commands.TELEMETRY_REQUEST: request_timebase},
-                    ]}
-
-                    lxm = LXMF.LXMessage(dest, source, "", desired_method=desired_method, fields = lxm_fields, include_ticket=True)
-                    lxm.request_timebase = request_timebase
-                    lxm.register_delivery_callback(self.telemetry_request_finished)
-                    lxm.register_failed_callback(self.telemetry_request_finished)
-
-                    if self.message_router.get_outbound_propagation_node() != None:
-                        if self.config["telemetry_try_propagation_on_fail"]:
-                            lxm.try_propagation_on_fail = True
-
-                    RNS.log(f"Sending telemetry request with timebase {request_timebase}", RNS.LOG_DEBUG)
-                    self.setpersistent(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.last_request_attempt", time.time())
-                    self.setstate(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.request_sending", True)
-                    self.message_router.handle_outbound(lxm)
-                    return "sent"
-
-            else:
+            except Exception as e:
+                RNS.log("Error requesting latest telemetry: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
                 return "not_sent"
 
+        else:            
+            if from_addr == None or from_addr == self.lxmf_destination.hash:
+                return "no_address"
+            else:
+                if self.getstate(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.request_sending") == True:
+                    RNS.log("Not sending new telemetry request, since an earlier transfer is already in progress", RNS.LOG_DEBUG)
+                    return "in_progress"
 
-    def send_latest_telemetry(self, to_addr=None, stream=None, is_authorized_telemetry_request=False):
-        if to_addr == None or to_addr == self.lxmf_destination.hash:
-            return "no_address"
-        else:
-            if to_addr == self.config["telemetry_collector"]:
-                is_authorized_telemetry_request = True
+                if from_addr != None:
+                    dest_identity = RNS.Identity.recall(from_addr)
+                    
+                    if dest_identity == None:
+                        RNS.log("The identity for "+RNS.prettyhexrep(from_addr)+" could not be recalled. Requesting identity from network...", RNS.LOG_DEBUG)
+                        RNS.Transport.request_path(from_addr)
+                        return "destination_unknown"
 
-            if self.getstate(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.update_sending") == True:
-                RNS.log("Not sending new telemetry update, since an earlier transfer is already in progress", RNS.LOG_DEBUG)
-                return "in_progress"
+                    else:
+                        now = time.time()
+                        dest = RNS.Destination(dest_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
+                        source = self.lxmf_destination
+                        
+                        if self.config["telemetry_use_propagation_only"] == True:
+                            desired_method = LXMF.LXMessage.PROPAGATED
+                        else:
+                            desired_method = LXMF.LXMessage.DIRECT
 
-            if (self.latest_packed_telemetry != None and self.latest_telemetry != None) or stream != None:
-                dest_identity = RNS.Identity.recall(to_addr)
-                
-                if dest_identity == None:
-                    RNS.log("The identity for "+RNS.prettyhexrep(to_addr)+" could not be recalled. Requesting identity from network...", RNS.LOG_DEBUG)
-                    RNS.Transport.request_path(to_addr)
-                    return "destination_unknown"
+                        request_timebase = self.getpersistent(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.timebase") or now - self.telemetry_request_max_history
+                        lxm_fields = { LXMF.FIELD_COMMANDS: [
+                            {Commands.TELEMETRY_REQUEST: request_timebase},
+                        ]}
+
+                        lxm = LXMF.LXMessage(dest, source, "", desired_method=desired_method, fields = lxm_fields, include_ticket=True)
+                        lxm.request_timebase = request_timebase
+                        lxm.register_delivery_callback(self.telemetry_request_finished)
+                        lxm.register_failed_callback(self.telemetry_request_finished)
+
+                        if self.message_router.get_outbound_propagation_node() != None:
+                            if self.config["telemetry_try_propagation_on_fail"]:
+                                lxm.try_propagation_on_fail = True
+
+                        RNS.log(f"Sending telemetry request with timebase {request_timebase}", RNS.LOG_DEBUG)
+                        self.setpersistent(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.last_request_attempt", time.time())
+                        self.setstate(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.request_sending", True)
+                        self.message_router.handle_outbound(lxm)
+                        return "sent"
 
                 else:
-                    dest = RNS.Destination(dest_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-                    source = self.lxmf_destination
-                    
-                    if self.config["telemetry_use_propagation_only"] == True:
-                        desired_method = LXMF.LXMessage.PROPAGATED
-                    else:
-                        desired_method = LXMF.LXMessage.DIRECT
+                    return "not_sent"
 
-                    lxm_fields = self.get_message_fields(to_addr, is_authorized_telemetry_request=is_authorized_telemetry_request, signal_already_sent=True)
-                    if lxm_fields == False and stream == None:
-                        return "already_sent"
+    def _service_send_latest_telemetry(self, to_addr=None, stream=None, is_authorized_telemetry_request=False):
+        if not RNS.vendor.platformutils.is_android():
+            return False
+        else:
+            if self.is_client:
+                try:
+                    if self.rpc_connection == None:
+                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
 
-                    if stream != None and len(stream) > 0:
-                        if lxm_fields == False:
-                            lxm_fields = {}
-                        lxm_fields[LXMF.FIELD_TELEMETRY_STREAM] = stream
-
-                    if lxm_fields != None and lxm_fields != False and (LXMF.FIELD_TELEMETRY in lxm_fields or LXMF.FIELD_TELEMETRY_STREAM in lxm_fields):
-                        if LXMF.FIELD_TELEMETRY in lxm_fields:
-                            telemeter = Telemeter.from_packed(lxm_fields[LXMF.FIELD_TELEMETRY])
-                            telemetry_timebase = telemeter.read_all()["time"]["utc"]
-                        elif LXMF.FIELD_TELEMETRY_STREAM in lxm_fields:
-                            telemetry_timebase = 0
-                            for te in lxm_fields[LXMF.FIELD_TELEMETRY_STREAM]:
-                                ts = te[1]
-                                telemetry_timebase = max(telemetry_timebase, ts)
-
-                        if telemetry_timebase > (self.getpersistent(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.last_send_success_timebase") or 0):
-                            lxm = LXMF.LXMessage(dest, source, "", desired_method=desired_method, fields = lxm_fields, include_ticket=self.is_trusted(to_addr))
-                            lxm.telemetry_timebase = telemetry_timebase
-                            lxm.register_delivery_callback(self.outbound_telemetry_finished)
-                            lxm.register_failed_callback(self.outbound_telemetry_finished)
-
-                            if self.message_router.get_outbound_propagation_node() != None:
-                                if self.config["telemetry_try_propagation_on_fail"]:
-                                    lxm.try_propagation_on_fail = True
-
-                            RNS.log(f"Sending telemetry update with timebase {telemetry_timebase}", RNS.LOG_DEBUG)
-
-                            self.setpersistent(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.last_send_attempt", time.time())
-                            self.setstate(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.update_sending", True)
-                            self.message_router.handle_outbound(lxm)
-                            return "sent"
-                        
-                        else:
-                            RNS.log(f"Telemetry update with timebase {telemetry_timebase} was already successfully sent", RNS.LOG_DEBUG)
-                            return "already_sent"
-                    else:
-                        return "nothing_to_send"
-
+                    self.rpc_connection.send({"send_latest_telemetry": {
+                        "to_addr": to_addr,
+                        "stream": stream,
+                        "is_authorized_telemetry_request": is_authorized_telemetry_request}
+                    })
+                    response = self.rpc_connection.recv()
+                    return response
+                
+                except Exception as e:
+                    RNS.log("Error while sending latest telemetry over RPC: "+str(e), RNS.LOG_DEBUG)
+                    RNS.trace_exception(e)
+                    return False
             else:
-                RNS.log("A telemetry update was requested, but there was nothing to send.", RNS.LOG_WARNING)
-                return "nothing_to_send"
+                return False
+
+    def send_latest_telemetry(self, to_addr=None, stream=None, is_authorized_telemetry_request=False):
+        if self.allow_service_dispatch and self.is_client:
+            try:
+                return self._service_send_latest_telemetry(to_addr, stream, is_authorized_telemetry_request)
+
+            except Exception as e:
+                RNS.log("Error requesting latest telemetry: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
+                return "not_sent"
+
+        else:
+            if to_addr == None or to_addr == self.lxmf_destination.hash:
+                return "no_address"
+            else:
+                if to_addr == self.config["telemetry_collector"]:
+                    is_authorized_telemetry_request = True
+
+                if self.getstate(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.update_sending") == True:
+                    RNS.log("Not sending new telemetry update, since an earlier transfer is already in progress", RNS.LOG_DEBUG)
+                    return "in_progress"
+
+                if (self.latest_packed_telemetry != None and self.latest_telemetry != None) or stream != None:
+                    dest_identity = RNS.Identity.recall(to_addr)
+                    
+                    if dest_identity == None:
+                        RNS.log("The identity for "+RNS.prettyhexrep(to_addr)+" could not be recalled. Requesting identity from network...", RNS.LOG_DEBUG)
+                        RNS.Transport.request_path(to_addr)
+                        return "destination_unknown"
+
+                    else:
+                        dest = RNS.Destination(dest_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
+                        source = self.lxmf_destination
+                        
+                        if self.config["telemetry_use_propagation_only"] == True:
+                            desired_method = LXMF.LXMessage.PROPAGATED
+                        else:
+                            desired_method = LXMF.LXMessage.DIRECT
+
+                        lxm_fields = self.get_message_fields(to_addr, is_authorized_telemetry_request=is_authorized_telemetry_request, signal_already_sent=True)
+                        if lxm_fields == False and stream == None:
+                            return "already_sent"
+
+                        if stream != None and len(stream) > 0:
+                            if lxm_fields == False:
+                                lxm_fields = {}
+                            lxm_fields[LXMF.FIELD_TELEMETRY_STREAM] = stream
+
+                        if lxm_fields != None and lxm_fields != False and (LXMF.FIELD_TELEMETRY in lxm_fields or LXMF.FIELD_TELEMETRY_STREAM in lxm_fields):
+                            if LXMF.FIELD_TELEMETRY in lxm_fields:
+                                telemeter = Telemeter.from_packed(lxm_fields[LXMF.FIELD_TELEMETRY])
+                                telemetry_timebase = telemeter.read_all()["time"]["utc"]
+                            elif LXMF.FIELD_TELEMETRY_STREAM in lxm_fields:
+                                telemetry_timebase = 0
+                                for te in lxm_fields[LXMF.FIELD_TELEMETRY_STREAM]:
+                                    ts = te[1]
+                                    telemetry_timebase = max(telemetry_timebase, ts)
+
+                            if telemetry_timebase > (self.getpersistent(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.last_send_success_timebase") or 0):
+                                lxm = LXMF.LXMessage(dest, source, "", desired_method=desired_method, fields = lxm_fields, include_ticket=self.is_trusted(to_addr))
+                                lxm.telemetry_timebase = telemetry_timebase
+                                lxm.register_delivery_callback(self.outbound_telemetry_finished)
+                                lxm.register_failed_callback(self.outbound_telemetry_finished)
+
+                                if self.message_router.get_outbound_propagation_node() != None:
+                                    if self.config["telemetry_try_propagation_on_fail"]:
+                                        lxm.try_propagation_on_fail = True
+
+                                RNS.log(f"Sending telemetry update with timebase {telemetry_timebase}", RNS.LOG_DEBUG)
+
+                                self.setpersistent(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.last_send_attempt", time.time())
+                                self.setstate(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.update_sending", True)
+                                self.message_router.handle_outbound(lxm)
+                                return "sent"
+                            
+                            else:
+                                RNS.log(f"Telemetry update with timebase {telemetry_timebase} was already successfully sent", RNS.LOG_DEBUG)
+                                return "already_sent"
+                        else:
+                            return "nothing_to_send"
+
+                else:
+                    RNS.log("A telemetry update was requested, but there was nothing to send.", RNS.LOG_WARNING)
+                    return "nothing_to_send"
 
 
     def list_telemetry(self, context_dest = None, after = None, before = None, limit = None):
@@ -1447,6 +1514,7 @@ class SidebandCore():
             return []
 
     def service_available(self):
+        heartbeat_stale_time = 7.5
         now = time.time()
         service_heartbeat = self.getstate("service.heartbeat")
         if not service_heartbeat:
@@ -1454,9 +1522,16 @@ class SidebandCore():
             return False
         else:
             try:
-                if now - service_heartbeat > 4.0:
-                    RNS.log("Stale service heartbeat at "+str(now), RNS.LOG_DEBUG)
-                    return False
+                if now - service_heartbeat > heartbeat_stale_time:
+                    RNS.log("Stale service heartbeat at "+str(now)+", retrying...", RNS.LOG_DEBUG)
+                    now = time.time()
+                    service_heartbeat = self.getstate("service.heartbeat")
+                    if now - service_heartbeat > heartbeat_stale_time:
+                        RNS.log("Service heartbeat did not recover after retry", RNS.LOG_DEBUG)
+                        return False
+                    else:
+                        RNS.log("Service heartbeat recovered at"+str(time), RNS.LOG_DEBUG)
+                        return True
                 else:
                     return True
             except Exception as e:
@@ -1625,7 +1700,45 @@ class SidebandCore():
                     RNS.log(ed, RNS.LOG_DEBUG)
                     return ed
 
-    
+    def _get_destination_establishment_rate(self, destination_hash):
+        try:
+            mr = self.message_router
+            oh = destination_hash
+            ol = None
+            if oh in mr.direct_links:
+                ol = mr.direct_links[oh]
+            elif oh in mr.backchannel_links:
+                ol = mr.backchannel_links[oh]
+
+            if ol != None:
+                ler = ol.get_establishment_rate()
+                if ler:
+                    return ler
+
+            return None
+
+        except Exception as e:
+            RNS.trace_exception(e)
+            return None
+
+    def get_destination_establishment_rate(self, destination_hash):
+        if not RNS.vendor.platformutils.is_android():
+            return self._get_destination_establishment_rate(destination_hash)
+        else:
+            if self.is_service:
+                return self._get_destination_establishment_rate(destination_hash)
+            else:
+                try:
+                    if self.rpc_connection == None:
+                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
+                    self.rpc_connection.send({"get_destination_establishment_rate": destination_hash})
+                    response = self.rpc_connection.recv()
+                    return response
+                except Exception as e:
+                    ed = "Error while getting destination link etablishment rate over RPC: "+str(e)
+                    RNS.log(ed, RNS.LOG_DEBUG)
+                    return None
+
     def __start_rpc_listener(self):
         try:
             RNS.log("Starting RPC listener", RNS.LOG_DEBUG)
@@ -1668,8 +1781,44 @@ class SidebandCore():
                                     connection.send(True)
                                 elif "get_plugins_info" in call:
                                     connection.send(self._get_plugins_info())
+                                elif "get_destination_establishment_rate" in call:
+                                    connection.send(self._get_destination_establishment_rate(call["get_destination_establishment_rate"]))
+                                elif "send_message" in call:
+                                    args = call["send_message"]
+                                    send_result = self.send_message(
+                                        args["content"],
+                                        args["destination_hash"],
+                                        args["propagation"],
+                                        skip_fields=args["skip_fields"],
+                                        no_display=args["no_display"],
+                                        attachment=args["attachment"],
+                                        image=args["image"],
+                                        audio=args["audio"])
+                                    connection.send(send_result)
+                                elif "send_command" in call:
+                                    args = call["send_command"]
+                                    send_result = self.send_command(
+                                        args["content"],
+                                        args["destination_hash"],
+                                        args["propagation"])
+                                    connection.send(send_result)
+                                elif "request_latest_telemetry" in call:
+                                    args = call["request_latest_telemetry"]
+                                    send_result = self.request_latest_telemetry(args["from_addr"])
+                                    connection.send(send_result)
+                                elif "send_latest_telemetry" in call:
+                                    args = call["send_latest_telemetry"]
+                                    send_result = self.send_latest_telemetry(
+                                        to_addr=args["to_addr"],
+                                        stream=args["stream"],
+                                        is_authorized_telemetry_request=args["is_authorized_telemetry_request"]
+                                    )
+                                    connection.send(send_result)
+                                elif "get_lxm_progress" in call:
+                                    args = call["get_lxm_progress"]
+                                    connection.send(self.get_lxm_progress(args["lxm_hash"]))
                                 else:
-                                    return None
+                                    connection.send(None)
 
                         except Exception as e:
                             RNS.log("Error on client RPC connection: "+str(e), RNS.LOG_ERROR)
@@ -2320,9 +2469,11 @@ class SidebandCore():
                 for entry in result:
                     try:
                         if not entry[2] in added_dests:
+                            app_data = entry[3]
                             announce = {
                                 "dest": entry[2],
-                                "data": entry[3].decode("utf-8"),
+                                "name": LXMF.display_name_from_app_data(app_data),
+                                "cost": LXMF.stamp_cost_from_app_data(app_data),
                                 "time": entry[1],
                                 "type": entry[4]
                             }
@@ -3906,9 +4057,34 @@ class SidebandCore():
             RNS.log("Error while creating paper message: "+str(e), RNS.LOG_ERROR)
             return False
 
+    def _service_get_lxm_progress(self, lxm_hash):
+        if not RNS.vendor.platformutils.is_android():
+            return False
+        else:
+            if self.is_client:
+                try:
+                    if self.rpc_connection == None:
+                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
+
+                    self.rpc_connection.send({"get_lxm_progress": {"lxm_hash": lxm_hash}})
+                    response = self.rpc_connection.recv()
+                    return response
+                
+                except Exception as e:
+                    RNS.log("Error while getting LXM progress over RPC: "+str(e), RNS.LOG_DEBUG)
+                    RNS.trace_exception(e)
+                    return False
+            else:
+                return False
+
+
     def get_lxm_progress(self, lxm_hash):
         try:
-            return self.message_router.get_outbound_progress(lxm_hash)
+            prg = self.message_router.get_outbound_progress(lxm_hash)
+            if not prg and self.is_client:
+                prg = self._service_get_lxm_progress(lxm_hash)
+
+            return prg
         except Exception as e:
             RNS.log("An error occurred while getting message transfer progress: "+str(e), RNS.LOG_ERROR)
             return None
@@ -3920,102 +4096,183 @@ class SidebandCore():
             RNS.log("An error occurred while getting message transfer stamp cost: "+str(e), RNS.LOG_ERROR)
             return None
 
-    def send_message(self, content, destination_hash, propagation, skip_fields=False, no_display=False, attachment = None, image = None, audio = None):
-        try:
-            if content == "":
-                raise ValueError("Message content cannot be empty")
-
-            dest_identity = RNS.Identity.recall(destination_hash)
-            dest = RNS.Destination(dest_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-            source = self.lxmf_destination
-            
-            if propagation:
-                desired_method = LXMF.LXMessage.PROPAGATED
-            else:
-                desired_method = LXMF.LXMessage.DIRECT
-
-            if skip_fields:
-                fields = {}
-            else:
-                fields = self.get_message_fields(destination_hash)
-
-            if attachment != None:
-                fields[LXMF.FIELD_FILE_ATTACHMENTS] = [attachment]
-            if image != None:
-                fields[LXMF.FIELD_IMAGE] = image
-            if audio != None:
-                fields[LXMF.FIELD_AUDIO] = audio
-
-            lxm = LXMF.LXMessage(dest, source, content, title="", desired_method=desired_method, fields = fields, include_ticket=self.is_trusted(destination_hash))
-            
-            if not no_display:
-                lxm.register_delivery_callback(self.message_notification)
-                lxm.register_failed_callback(self.message_notification)
-            else:
-                lxm.register_delivery_callback(self.message_notification_no_display)
-                lxm.register_failed_callback(self.message_notification_no_display)
-
-            if self.message_router.get_outbound_propagation_node() != None:
-                if self.config["lxmf_try_propagation_on_fail"]:
-                    lxm.try_propagation_on_fail = True
-
-            self.message_router.handle_outbound(lxm)
-
-            if not no_display:
-                self.lxm_ingest(lxm, originator=True)
-
-            return True
-
-        except Exception as e:
-            RNS.log("Error while sending message: "+str(e), RNS.LOG_ERROR)
-            RNS.trace_exception(e)
+    def _service_send_message(self, content, destination_hash, propagation, skip_fields=False, no_display=False, attachment = None, image = None, audio = None):
+        if not RNS.vendor.platformutils.is_android():
             return False
+        else:
+            if self.is_client:
+                try:
+                    if self.rpc_connection == None:
+                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
+
+                    self.rpc_connection.send({"send_message": {
+                        "content": content,
+                        "destination_hash": destination_hash,
+                        "propagation": propagation,
+                        "skip_fields": skip_fields,
+                        "no_display": no_display,
+                        "attachment": attachment,
+                        "image": image,
+                        "audio": audio}
+                    })
+                    response = self.rpc_connection.recv()
+                    return response
+                
+                except Exception as e:
+                    RNS.log("Error while sending message over RPC: "+str(e), RNS.LOG_DEBUG)
+                    RNS.trace_exception(e)
+                    return False
+            else:
+                return False
+
+    def _service_send_command(self, content, destination_hash, propagation):
+        if not RNS.vendor.platformutils.is_android():
+            return False
+        else:
+            if self.is_client:
+                try:
+                    if self.rpc_connection == None:
+                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
+
+                    self.rpc_connection.send({"send_command": {
+                        "content": content,
+                        "destination_hash": destination_hash,
+                        "propagation": propagation}
+                    })
+                    response = self.rpc_connection.recv()
+                    return response
+                
+                except Exception as e:
+                    RNS.log("Error while sending command over RPC: "+str(e), RNS.LOG_DEBUG)
+                    RNS.trace_exception(e)
+                    return False
+            else:
+                return False
+
+    def send_message(self, content, destination_hash, propagation, skip_fields=False, no_display=False, attachment = None, image = None, audio = None):
+        if self.allow_service_dispatch and self.is_client:
+            try:
+                return self._service_send_message(content, destination_hash, propagation, skip_fields, no_display, attachment, image, audio)
+
+            except Exception as e:
+                RNS.log("Error while sending message: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
+                return False
+
+        else:
+            try:
+                if content == "":
+                    raise ValueError("Message content cannot be empty")
+
+                dest_identity = RNS.Identity.recall(destination_hash)
+                dest = RNS.Destination(dest_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
+                source = self.lxmf_destination
+                
+                if propagation:
+                    desired_method = LXMF.LXMessage.PROPAGATED
+                else:
+                    if not self.message_router.delivery_link_available(destination_hash) and RNS.Identity.current_ratchet_id(destination_hash) != None:
+                        RNS.log(f"Have ratchet for {RNS.prettyhexrep(destination_hash)}, requesting opportunistic delivery of message", RNS.LOG_DEBUG)
+                        desired_method = LXMF.LXMessage.OPPORTUNISTIC
+                    else:
+                        desired_method = LXMF.LXMessage.DIRECT
+
+                if skip_fields:
+                    fields = {}
+                else:
+                    fields = self.get_message_fields(destination_hash)
+
+                if attachment != None:
+                    fields[LXMF.FIELD_FILE_ATTACHMENTS] = [attachment]
+                if image != None:
+                    fields[LXMF.FIELD_IMAGE] = image
+                if audio != None:
+                    fields[LXMF.FIELD_AUDIO] = audio
+
+                lxm = LXMF.LXMessage(dest, source, content, title="", desired_method=desired_method, fields = fields, include_ticket=self.is_trusted(destination_hash))
+                
+                if not no_display:
+                    lxm.register_delivery_callback(self.message_notification)
+                    lxm.register_failed_callback(self.message_notification)
+                else:
+                    lxm.register_delivery_callback(self.message_notification_no_display)
+                    lxm.register_failed_callback(self.message_notification_no_display)
+
+                if self.message_router.get_outbound_propagation_node() != None:
+                    if self.config["lxmf_try_propagation_on_fail"]:
+                        lxm.try_propagation_on_fail = True
+
+                self.message_router.handle_outbound(lxm)
+
+                if not no_display:
+                    self.lxm_ingest(lxm, originator=True)
+
+                return True
+
+            except Exception as e:
+                RNS.log("Error while sending message: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
+                return False
 
     def send_command(self, content, destination_hash, propagation):
-        try:
-            if content == "":
+        if self.allow_service_dispatch and self.is_client:
+            try:
+                return self._service_send_command(content, destination_hash, propagation)
+
+            except Exception as e:
+                RNS.log("Error while sending message: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
                 return False
 
-            commands = []
-            if content.startswith("echo "):
-                echo_content = content.replace("echo ", "").encode("utf-8")
-                if len(echo_content) > 0:
-                    commands.append({Commands.ECHO: echo_content})
-            elif content.startswith("sig"):
-                commands.append({Commands.SIGNAL_REPORT: True})
-            elif content.startswith("ping"):
-                commands.append({Commands.PING: True})
-            else:
-                commands.append({Commands.PLUGIN_COMMAND: content})
+        else:
+            try:
+                if content == "":
+                    return False
 
-            if len(commands) == 0:
+                commands = []
+                if content.startswith("echo "):
+                    echo_content = content.replace("echo ", "").encode("utf-8")
+                    if len(echo_content) > 0:
+                        commands.append({Commands.ECHO: echo_content})
+                elif content.startswith("sig"):
+                    commands.append({Commands.SIGNAL_REPORT: True})
+                elif content.startswith("ping"):
+                    commands.append({Commands.PING: True})
+                else:
+                    commands.append({Commands.PLUGIN_COMMAND: content})
+
+                if len(commands) == 0:
+                    return False
+
+                dest_identity = RNS.Identity.recall(destination_hash)
+                dest = RNS.Destination(dest_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
+                source = self.lxmf_destination
+                
+                if propagation:
+                    desired_method = LXMF.LXMessage.PROPAGATED
+                else:
+                    if not self.message_router.delivery_link_available(destination_hash) and RNS.Identity.current_ratchet_id(destination_hash) != None:
+                        RNS.log(f"Have ratchet for {RNS.prettyhexrep(destination_hash)}, requesting opportunistic delivery of command", RNS.LOG_DEBUG)
+                        desired_method = LXMF.LXMessage.OPPORTUNISTIC
+                    else:
+                        desired_method = LXMF.LXMessage.DIRECT
+
+                lxm = LXMF.LXMessage(dest, source, "", title="", desired_method=desired_method, fields = {LXMF.FIELD_COMMANDS: commands}, include_ticket=self.is_trusted(destination_hash))
+                lxm.register_delivery_callback(self.message_notification)
+                lxm.register_failed_callback(self.message_notification)
+
+                if self.message_router.get_outbound_propagation_node() != None:
+                    if self.config["lxmf_try_propagation_on_fail"]:
+                        lxm.try_propagation_on_fail = True
+
+                self.message_router.handle_outbound(lxm)
+                self.lxm_ingest(lxm, originator=True)
+
+                return True
+
+            except Exception as e:
+                RNS.log("Error while sending message: "+str(e), RNS.LOG_ERROR)
                 return False
-
-            dest_identity = RNS.Identity.recall(destination_hash)
-            dest = RNS.Destination(dest_identity, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
-            source = self.lxmf_destination
-            
-            if propagation:
-                desired_method = LXMF.LXMessage.PROPAGATED
-            else:
-                desired_method = LXMF.LXMessage.DIRECT
-
-            lxm = LXMF.LXMessage(dest, source, "", title="", desired_method=desired_method, fields = {LXMF.FIELD_COMMANDS: commands}, include_ticket=self.is_trusted(destination_hash))
-            lxm.register_delivery_callback(self.message_notification)
-            lxm.register_failed_callback(self.message_notification)
-
-            if self.message_router.get_outbound_propagation_node() != None:
-                if self.config["lxmf_try_propagation_on_fail"]:
-                    lxm.try_propagation_on_fail = True
-
-            self.message_router.handle_outbound(lxm)
-            self.lxm_ingest(lxm, originator=True)
-
-            return True
-
-        except Exception as e:
-            RNS.log("Error while sending message: "+str(e), RNS.LOG_ERROR)
-            return False
 
     def new_conversation(self, dest_str, name = "", trusted = False):
         if len(dest_str) != RNS.Reticulum.TRUNCATED_HASHLENGTH//8*2:

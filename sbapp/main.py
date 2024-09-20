@@ -1,6 +1,6 @@
 __debug_build__ = False
 __disable_shaders__ = False
-__version__ = "0.9.5"
+__version__ = "0.9.7"
 __variant__ = "beta"
 
 import sys
@@ -303,6 +303,7 @@ class SidebandApp(MDApp):
 
         self.final_load_completed = False
         self.service_last_available = 0
+        self.closing_app = False
 
         self.attach_path = None
         self.attach_type = None
@@ -988,6 +989,11 @@ class SidebandApp(MDApp):
                 ok_button.bind(on_release=dl_ok)
                 dialog.open()
 
+    def close_requested(self, *args):
+        if not self.closing_app:
+            self.quit_action(None)
+        return True
+
     def on_start(self):
         self.last_exit_event = time.time()
         self.root.ids.screen_manager.transition = self.slide_transition
@@ -997,6 +1003,7 @@ class SidebandApp(MDApp):
         EventLoop.window.bind(on_keyboard=self.keyboard_event)
         EventLoop.window.bind(on_key_down=self.keydown_event)
         EventLoop.window.bind(on_key_up=self.keyup_event)
+        Window.bind(on_request_close=self.close_requested)
 
         if __variant__ != "":
             variant_str = " "+__variant__
@@ -1241,6 +1248,7 @@ class SidebandApp(MDApp):
         self.root.ids.nav_drawer.set_state("closed")
 
     def quit_action(self, sender):
+        self.closing_app = True
         self.root.ids.nav_drawer.set_state("closed")
         self.sideband.should_persist_data()
 
@@ -2760,8 +2768,9 @@ class SidebandApp(MDApp):
                 pre = self.settings_screen.ids.settings_lxmf_sync_periodic.text
                 self.settings_screen.ids.settings_lxmf_sync_periodic.text = "Auto sync every "+interval_text
                 if save:
-                    self.sideband.config["lxmf_sync_interval"] = interval
-                    self.sideband.save_configuration()
+                    if (event == None or not hasattr(event, "button") or not event.button) or not "scroll" in event.button:
+                        self.sideband.config["lxmf_sync_interval"] = interval
+                        self.sideband.save_configuration()
 
             def stamp_cost_change(sender=None, event=None, save=True):
                 slider_val = int(self.settings_screen.ids.settings_lxmf_require_stamps_cost.value)
@@ -2774,7 +2783,8 @@ class SidebandApp(MDApp):
                     if slider_val < 1:
                         slider_val = 1
                     self.sideband.config["lxmf_inbound_stamp_cost"] = slider_val
-                    self.sideband.save_configuration()
+                    if (event == None or not hasattr(event, "button") or not event.button) or not "scroll" in event.button:
+                        self.sideband.save_configuration()
 
             self.settings_screen.ids.settings_lxmf_address.text = RNS.hexrep(self.sideband.lxmf_destination.hash, delimit=False)
             self.settings_screen.ids.settings_identity_hash.text = RNS.hexrep(self.sideband.lxmf_destination.identity.hash, delimit=False)
@@ -2991,35 +3001,35 @@ class SidebandApp(MDApp):
                 self.widget_hide(self.connectivity_screen.ids.connectivity_transport_fields)
 
             def con_collapse_local(collapse=True):
-                # self.widget_hide(self.root.ids.connectivity_local_fields, collapse)
+                # self.widget_hide(self.connectivity_screen.ids.connectivity_local_fields, collapse)
                 pass
                 
             def con_collapse_tcp(collapse=True):
-                # self.widget_hide(self.root.ids.connectivity_tcp_fields, collapse)
+                # self.widget_hide(self.connectivity_screen.ids.connectivity_tcp_fields, collapse)
                 pass
                 
             def con_collapse_i2p(collapse=True):
-                # self.widget_hide(self.root.ids.connectivity_i2p_fields, collapse)
+                # self.widget_hide(self.connectivity_screen.ids.connectivity_i2p_fields, collapse)
                 pass
                 
             def con_collapse_bluetooth(collapse=True):
-                # self.widget_hide(self.root.ids.connectivity_bluetooth_fields, collapse)
+                # self.widget_hide(self.connectivity_screen.ids.connectivity_bluetooth_fields, collapse)
                 pass
                 
             def con_collapse_rnode(collapse=True):
-                # self.widget_hide(self.root.ids.connectivity_rnode_fields, collapse)
+                # self.widget_hide(self.connectivity_screen.ids.connectivity_rnode_fields, collapse)
                 pass
                 
             def con_collapse_modem(collapse=True):
-                # self.widget_hide(self.root.ids.connectivity_modem_fields, collapse)
+                # self.widget_hide(self.connectivity_screen.ids.connectivity_modem_fields, collapse)
                 pass
                 
             def con_collapse_serial(collapse=True):
-                # self.widget_hide(self.root.ids.connectivity_serial_fields, collapse)
+                # self.widget_hide(self.connectivity_screen.ids.connectivity_serial_fields, collapse)
                 pass
                 
             def con_collapse_transport(collapse=True):
-                # self.widget_hide(self.root.ids.connectivity_transport_fields, collapse)
+                # self.widget_hide(self.connectivity_screen.ids.connectivity_transport_fields, collapse)
                 pass
                 
             def save_connectivity(sender=None, event=None):
@@ -6132,7 +6142,7 @@ Thank you very much for using Free Communications Systems.
             self.root.ids.screen_manager.transition = self.slide_transition
             self.root.ids.screen_manager.transition.direction = direction
 
-        info = "The [b]Local Broadcasts[/b] feature will allow you to send and listen for local broadcast transmissions on connected radio, LoRa and WiFi interfaces.\n\n[b]Local Broadcasts[/b] makes it easy to establish public information exchange with anyone in direct radio range, or even with large areas far away using the [i]Remote Broadcast Repeater[/i] feature.\n\nThese features are not yet implemented in openCom Companion.\n\nWant it faster? Go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project."
+        info = "The [b]Local Broadcasts[/b] feature will allow you to send and listen for local broadcast transmissions on all connected interfaces.\n\n[b]Local Broadcasts[/b] makes it easy to establish public information exchange with anyone in direct radio range, or even with large areas far away using the [i]Remote Broadcast Repeater[/i] feature.\n\nThese features are not yet implemented in openCom Companion.\n\nWant it faster? Go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the project."
         if self.theme_cls.theme_style == "Dark":
             info = "[color=#"+dark_theme_text_color+"]"+info+"[/color]"
         self.broadcasts_screen.ids.broadcasts_info.text = info
