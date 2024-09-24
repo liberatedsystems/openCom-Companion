@@ -3710,7 +3710,7 @@ class SidebandCore():
                             else:
                                 sec_atl_long = self.config["hw_rnode_sec_atl_long"]
 
-                            subint_config = [[0]*10 for i in range(2)]
+                            subint_config = [[0]*11 for i in range(2)]
 
                             # Primary modem
                             subint_config[0][0] = "Primary modem" # Name of interface
