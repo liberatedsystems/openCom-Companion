@@ -3700,6 +3700,16 @@ class SidebandCore():
                             atl_long = self.config["hw_rnode_atl_long"]
 
                         if self.config["hw_rnode_secondary_modem"]:
+                            if self.config["hw_rnode_sec_atl_short"] == "":
+                                sec_atl_short = None
+                            else:
+                                sec_atl_short = self.config["hw_rnode_sec_atl_short"]
+
+                            if self.config["hw_rnode_sec_atl_long"] == "":
+                                sec_atl_long = None
+                            else:
+                                sec_atl_long = self.config["hw_rnode_sec_atl_long"]
+
                             subint_config = [[0]*10 for i in range(2)]
 
                             # Primary modem
@@ -3713,6 +3723,7 @@ class SidebandCore():
                             subint_config[0][7] = False # flow control hardcoded to false for now
                             subint_config[0][8] = atl_short 
                             subint_config[0][9] = atl_long 
+                            subint_config[0][10] = True # outgoing
 
                             # Secondary modem
                             subint_config[1][0] = "Secondary modem" # Name of interface
@@ -3723,19 +3734,9 @@ class SidebandCore():
                             subint_config[1][5] = self.config["hw_rnode_sec_spreading_factor"]
                             subint_config[1][6] = self.config["hw_rnode_coding_rate"]
                             subint_config[1][7] = False # flow control hardcoded to false for now
-
-                            if self.config["hw_rnode_atl_short"] == "":
-                                sec_atl_short = None
-                            else:
-                                sec_atl_short = self.config["hw_rnode_sec_atl_short"]
-
-                            if self.config["hw_rnode_atl_long"] == "":
-                                sec_atl_long = None
-                            else:
-                                sec_atl_long = self.config["hw_rnode_sec_atl_long"]
-
-                            subint_config[1][8] = sec_atl_short
-                            subint_config[1][9] = sec_atl_long
+                            subint_config[0][8] = sec_atl_short
+                            subint_config[0][9] = sec_atl_long
+                            subint_config[1][10] = True # outgoing
 
                             rnodeinterface = RNS.Interfaces.Android.RNodeMultiInterface.RNodeMultiInterface(
                                     RNS.Transport,
@@ -3747,7 +3748,7 @@ class SidebandCore():
                                     target_device_name = bt_device_name,
                                )
 
-                            rnodeinterface.OUT = True
+                            rnodeinterface.start()
                         else:
                             rnodeinterface = RNS.Interfaces.Android.RNodeInterface.RNodeInterface(
                                     RNS.Transport,
