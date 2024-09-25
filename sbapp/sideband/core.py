@@ -443,7 +443,7 @@ class SidebandCore():
         self.config["hw_rnode_coding_rate"] = self.config["hw_rnode_presets_cfg"][0][2]
         self.config["hw_rnode_tx_power"] = 22
         self.config["hw_rnode_secondary_modem"] = False
-        self.config["hw_rnode_sec_presets_cfg"] = [[1625000, 5, 5, 100, 100], [1625000, 7, 6, 100, 100], [1625000, 9, 7, 100, 100], [1625000, 12, 8, 100, 100]]
+        self.config["hw_rnode_sec_presets_cfg"] = [[1625000, 5, 5, 100, 100], [1625000, 7, 6, 100, 100], [812500, 9, 7, 100, 100], [203.125, 12, 8, 100, 100]]
         self.config["hw_rnode_sec_advanced_cfg"] = False
         self.config["hw_rnode_sec_preset"] = self.config["hw_rnode_presets"][0]
         self.config["hw_rnode_sec_channels"] = {
