@@ -1,7 +1,7 @@
 __debug_build__ = False
 __disable_shaders__ = False
-__version__ = "0.9.7"
-__variant__ = "beta"
+__version__ = "1.1.3"
+__variant__ = ""
 
 import sys
 import argparse
@@ -300,6 +300,7 @@ class SidebandApp(MDApp):
         self.hardware_rnode_ready = False
         self.hardware_modem_ready = False
         self.hardware_serial_ready = False
+        self.hw_error_dialog = None
 
         self.final_load_completed = False
         self.service_last_available = 0
@@ -406,6 +407,20 @@ class SidebandApp(MDApp):
         else:
             self.open_conversations()
 
+        if RNS.vendor.platformutils.is_android():
+            if self.sideband.getstate("android.power_restricted", allow_cache=False):
+                RNS.log("Android power restrictions detected, background connectivity will not work. Asking for permissions.", RNS.LOG_DEBUG)
+                def pm_job(dt):
+                    Settings = autoclass("android.provider.Settings")
+                    Intent = autoclass("android.content.Intent")
+                    Uri = autoclass("android.net.Uri")
+
+                    requestIntent = Intent()
+                    requestIntent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    requestIntent.setData(Uri.parse("package:io.unsigned.sideband"))
+                    mActivity.startActivity(requestIntent)
+                Clock.schedule_once(pm_job, 1.5)
+
         if not self.root.ids.screen_manager.has_screen("messages_screen"):
             self.messages_screen = Builder.load_string(messages_screen_kv)
             self.messages_screen.app = self
@@ -418,22 +433,25 @@ class SidebandApp(MDApp):
 
         def check_errors(dt):
             if self.sideband.getpersistent("startup.errors.rnode") != None:
-                description = self.sideband.getpersistent("startup.errors.rnode")["description"]
-                self.sideband.setpersistent("startup.errors.rnode", None)
-                yes_button = MDRectangleFlatButton(
-                    text="OK",
-                    font_size=dp(18),
-                )
-                self.hw_error_dialog = MDDialog(
-                    title="Hardware Error",
-                    text="When starting a connected RNode, Reticulum reported the following error:\n\n[i]"+str(description)+"[/i]",
-                    buttons=[ yes_button ],
-                    # elevation=0,
-                )
-                def dl_yes(s):
-                    self.hw_error_dialog.dismiss()
-                yes_button.bind(on_release=dl_yes)
-                self.hw_error_dialog.open()
+                if self.hw_error_dialog == None or (self.hw_error_dialog != None and not self.hw_error_dialog.is_open):
+                    description = self.sideband.getpersistent("startup.errors.rnode")["description"]
+                    self.sideband.setpersistent("startup.errors.rnode", None)
+                    yes_button = MDRectangleFlatButton(
+                        text="OK",
+                        font_size=dp(18),
+                    )
+                    self.hw_error_dialog = MDDialog(
+                        title="Hardware Error",
+                        text="When starting a connected RNode, Reticulum reported the following error:\n\n[i]"+str(description)+"[/i]",
+                        buttons=[ yes_button ],
+                        # elevation=0,
+                    )
+                    def dl_yes(s):
+                        self.hw_error_dialog.is_open = False
+                        self.hw_error_dialog.dismiss()
+                    yes_button.bind(on_release=dl_yes)
+                    self.hw_error_dialog.open()
+                    self.hw_error_dialog.is_open = True
 
         Clock.schedule_once(check_errors, 1.5)
 
@@ -708,7 +726,18 @@ class SidebandApp(MDApp):
 
             if check_permission(bt_permission_name):
                 RNS.log("Have bluetooth connect permissions", RNS.LOG_DEBUG)
-                self.sideband.setpersistent("permissions.bluetooth", True)
+
+                if android_api_version > 30:
+                    if check_permission("android.permission.BLUETOOTH_SCAN"):
+                        RNS.log("Have bluetooth scan permissions", RNS.LOG_DEBUG)
+                        self.sideband.setpersistent("permissions.bluetooth", True)
+
+                    else:
+                        RNS.log("Do not have bluetooth scan permissions")
+                        self.sideband.setpersistent("permissions.bluetooth", False)
+
+                else:
+                    self.sideband.setpersistent("permissions.bluetooth", True)
             else:
                 RNS.log("Do not have bluetooth connect permissions")
                 self.sideband.setpersistent("permissions.bluetooth", False)
@@ -799,17 +828,35 @@ class SidebandApp(MDApp):
 
     def request_bluetooth_permissions(self):
         if RNS.vendor.platformutils.get_platform() == "android":
-            if not check_permission("android.permission.BLUETOOTH_CONNECT"):
-                RNS.log("Requesting bluetooth permission", RNS.LOG_DEBUG)
-                request_permissions(["android.permission.BLUETOOTH_CONNECT"])
+            if not check_permission("android.permission.BLUETOOTH_CONNECT") or not check_permission("android.permission.BLUETOOTH_SCAN"):
+                RNS.log("Requesting Bluetooth permissions", RNS.LOG_DEBUG)
+                request_permissions(["android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_SCAN"])
 
         self.check_bluetooth_permissions()
 
     def on_new_intent(self, intent):
-        RNS.log("Received intent", RNS.LOG_DEBUG)
         intent_action = intent.getAction()
         action = None
         data = None
+
+        RNS.log(f"Received intent: {intent_action}", RNS.LOG_DEBUG)
+
+        if intent_action == "android.intent.action.MAIN":
+            JString = autoclass('java.lang.String')
+            Intent = autoclass("android.content.Intent")
+            try:
+                extras = intent.getExtras()
+                if extras:
+                    data = extras.getString("intent_action", "undefined")
+                    if data.startswith("conversation."):
+                        conv_hexhash = bytes.fromhex(data.replace("conversation.", ""))
+                        def cb(dt):
+                            self.open_conversation(conv_hexhash)
+                        Clock.schedule_once(cb, 0.2)
+
+            except Exception as e:
+                RNS.log(f"Error while getting intent action data: {e}", RNS.LOG_ERROR)
+                RNS.trace_exception(e)
 
         if intent_action == "android.intent.action.WEB_SEARCH":
             SearchManager = autoclass('android.app.SearchManager')
@@ -889,6 +936,29 @@ class SidebandApp(MDApp):
 
             else:
                 self.service_last_available = time.time()
+
+            if RNS.vendor.platformutils.is_android():
+                rnode_errors = self.sideband.getpersistent("runtime.errors.rnode")
+                if rnode_errors != None:
+                    if self.hw_error_dialog == None or (self.hw_error_dialog != None and not self.hw_error_dialog.is_open):
+                        description = rnode_errors["description"]
+                        self.sideband.setpersistent("runtime.errors.rnode", None)
+                        yes_button = MDRectangleFlatButton(
+                            text="OK",
+                            font_size=dp(18),
+                        )
+                        self.hw_error_dialog = MDDialog(
+                            title="Hardware Error",
+                            text="While communicating with an RNode, Reticulum reported the following error:\n\n[i]"+str(description)+"[/i]",
+                            buttons=[ yes_button ],
+                            # elevation=0,
+                        )
+                        def dl_yes(s):
+                            self.hw_error_dialog.dismiss()
+                            self.hw_error_dialog.is_open = False
+                        yes_button.bind(on_release=dl_yes)
+                        self.hw_error_dialog.open()
+                        self.hw_error_dialog.is_open = True
 
 
         if self.root.ids.screen_manager.current == "messages_screen":
@@ -1645,8 +1715,6 @@ class SidebandApp(MDApp):
                     ate_dialog.open()
         
         else:
-            self.sideband.config["map_storage_path"] = None
-            self.sideband.save_configuration()
             if RNS.vendor.platformutils.get_platform() == "android":
                 toast("No file access, check permissions!")
             else:
@@ -1779,7 +1847,11 @@ class SidebandApp(MDApp):
             return
 
         self.sideband.ui_started_recording()
-        self.audio_msg_mode = LXMF.AM_CODEC2_2400
+        if self.sideband.config["hq_ptt"]:
+            self.audio_msg_mode = LXMF.AM_OPUS_OGG
+        else:
+            self.audio_msg_mode = LXMF.AM_CODEC2_2400
+
         self.message_attach_action(attach_type="audio", nodialog=True)
         if self.rec_dialog == None:
             self.message_init_rec_dialog()
@@ -2719,6 +2791,14 @@ class SidebandApp(MDApp):
                 self.sideband.save_configuration()
                 self.sideband._reticulum_log_debug(self.sideband.config["debug"])
 
+            def save_block_predictive_text(sender=None, event=None):
+                self.sideband.config["block_predictive_text"] = self.settings_screen.ids.settings_block_predictive_text.active
+                self.sideband.save_configuration()
+
+            def save_hq_ptt(sender=None, event=None):
+                self.sideband.config["hq_ptt"] = self.settings_screen.ids.settings_hq_ptt.active
+                self.sideband.save_configuration()
+
             def save_print_command(sender=None, event=None):
                 if not sender.focus:
                     in_cmd = self.settings_screen.ids.settings_print_command.text
@@ -2882,8 +2962,14 @@ class SidebandApp(MDApp):
             self.settings_screen.ids.settings_lxm_limit_1mb.active = self.sideband.config["lxm_limit_1mb"]
             self.settings_screen.ids.settings_lxm_limit_1mb.bind(active=save_lxm_limit_1mb)
 
+            self.settings_screen.ids.settings_hq_ptt.active = self.sideband.config["hq_ptt"]
+            self.settings_screen.ids.settings_hq_ptt.bind(active=save_hq_ptt)
+
             self.settings_screen.ids.settings_debug.active = self.sideband.config["debug"]
             self.settings_screen.ids.settings_debug.bind(active=save_debug)
+
+            self.settings_screen.ids.settings_block_predictive_text.active = self.sideband.config["block_predictive_text"]
+            self.settings_screen.ids.settings_block_predictive_text.bind(active=save_block_predictive_text)
 
             self.settings_screen.ids.settings_lang_default.active = False
             self.settings_screen.ids.settings_lang_chinese.active = False
@@ -4010,6 +4096,15 @@ class SidebandApp(MDApp):
 
         self.sideband.save_configuration()
    
+    def hardware_rnode_ble_toggle_action(self, sender=None, event=None):
+        if sender.active:
+            self.sideband.config["hw_rnode_ble"] = True
+            self.request_bluetooth_permissions()
+        else:
+            self.sideband.config["hw_rnode_ble"] = False
+
+        self.sideband.save_configuration()
+   
     def hardware_rnode_framebuffer_toggle_action(self, sender=None, event=None):
         if sender.active:
             self.sideband.config["hw_rnode_enable_framebuffer"] = True
@@ -4115,6 +4210,7 @@ class SidebandApp(MDApp):
                 t_btd = ""
 
             self.hardware_rnode_screen.ids.hardware_rnode_bluetooth.active = self.sideband.config["hw_rnode_bluetooth"]
+            self.hardware_rnode_screen.ids.hardware_rnode_ble.active = self.sideband.config["hw_rnode_ble"]
             self.hardware_rnode_screen.ids.hardware_rnode_framebuffer.active = self.sideband.config["hw_rnode_enable_framebuffer"]
 
             self.hardware_rnode_screen.ids.hardware_rnode_advanced_cfg.active = self.sideband.config["hw_rnode_advanced_cfg"]
@@ -4181,6 +4277,7 @@ class SidebandApp(MDApp):
             self.hardware_rnode_screen.ids.hardware_rnode_beaconinterval.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_beacondata.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_bluetooth.bind(active=self.hardware_rnode_bt_toggle_action)
+            self.hardware_rnode_screen.ids.hardware_rnode_ble.bind(active=self.hardware_rnode_ble_toggle_action)
             self.hardware_rnode_screen.ids.hardware_rnode_framebuffer.bind(active=self.hardware_rnode_framebuffer_toggle_action)
 
             self.hardware_rnode_screen.ids.hardware_rnode_advanced_cfg.bind(active=self.hardware_rnode_advanced_cfg_toggle_action)
@@ -6060,37 +6157,35 @@ This short guide will give you a basic introduction to the concepts that underpi
 This also means that openCom Companion operates differently than what you might be used to. It does not need a connection to a server on the Internet to function, and you do not have an account anywhere."""
             
             guide_text3 = """
-[size=18dp][b]Operating Principles[/b][/size][size=5dp]\n \n[/size]When openCom Companion is started on your device for the first time, it randomly generates a set of cryptographic keys. These keys are then used to create an LXMF address for your use. Any other endpoint in [i]any[/i] Reticulum network will be able to send data to this address, as long as there is [i]some sort of physical connection[/i] between your device and the remote endpoint. You can also move around to other Reticulum networks with this address, even ones that were never connected to the network the address was created on, or that didn't exist when the address was created. The address is yours to keep and control for as long (or short) a time you need it, and you can always delete it and create a new one."""
+[size=18dp][b]Operating Principles[/b][/size][size=5dp]\n \n[/size]When openCom Companion is started on your device for the first time, it randomly generates a 512-bit Reticulum Identity Key. This cryptographic key is then used to create an LXMF address for your use, and in turn to secure any communication to your address. Any other endpoint in [i]any[/i] Reticulum network will be able to send data to your address, as long as there is [i]some sort of physical connection[/i] between your device and the remote endpoint. You can also move around to other Reticulum networks with this address, even ones that were never connected to the network the address was created on, or that didn't exist when the address was created.\n\nYour LXMF address is yours to keep and control for as long (or short) a time you need it, and you can always delete it and create a new one. You identity keys and corresponding addresses are never registered on or controlled by any external servers or services, and will never leave your device, unless you manually export them for backup."""
         
             guide_text4 = """
-[size=18dp][b]Becoming Reachable[/b][/size][size=5dp]\n \n[/size]To establish reachability for any Reticulum address on a network, an [i]announce[/i] must be sent. openCom Companion does not do this automatically by default, but can be configured to do so every time the program starts. To send an announce manually, press the [i]Announce[/i] button in the [i]Conversations[/i] section of the program. When you send an announce, you make your LXMF address reachable for real-time messaging to the entire network you are connected to. Even in very large networks, you can expect global reachability for your address to be established in under a minute.
-
-If you don't move to other places in the network, and keep connected through the same hubs or gateways, it is generally not necessary to send an announce more often than once every week. If you change your entry point to the network, you may want to send an announce, or you may just want to stay quiet."""
-
+[size=18dp][b]Becoming Reachable[/b][/size][size=5dp]\n \n[/size]To establish reachability for any Reticulum destination on a network, an [i]announce[/i] must be sent. By default, openCom Companion will announce automatically when necessary, but if you want to stay silent, automatic announces can be disabled in [b]Preferences[/b].\n\nTo send an announce manually, press the [i]Announce[/i] button in the [i]Conversations[/i] section of the program. When you send an announce, you make your LXMF address reachable for real-time messaging to the entire network you are connected to. Even in very large networks, you can expect global reachability for your address to be established in under a minute."""
+            
+            guide_text10 = """
+[size=18dp][b]Getting Connected[/b][/size][size=5dp]\n \n[/size]If you already have Reticulum connectivity set up on the device you are running Sideband on, no further configuration should be necessary, and Sideband will simply use the available Reticulum connectivity.\n\nIf you are running Sideband on a computer, you can configure interfaces in the Reticulum configuration file ([b]~/.reticulum/config[/b] by default). If you are running Sideband on an Android device, you can configure various interface types in the [b]Connectivity[/b] section. By default, only an [i]AutoInterface[/i] is enabled, which will connect you automatically with any other local devices on the same WiFi and/or Ethernet networks. This may or may not include Reticulum Transport Nodes, which can route your traffic to wider networks.\n\nYou can enable any or all of the other available interface types to gain wider connectivity. For more specific information on interface types, configuration options, and how to effectively build your own Reticulum networks, see the [b]Reticulum Manual[b]."""
+        
             guide_text5 = """
 [size=18dp][b]Relax & Disconnect[/b][/size][size=5dp]\n \n[/size]If you are not connected to the network, it is still possible for other people to message you, as long as one or more [i]Propagation Nodes[/i] exist on the network. These nodes pick up and hold encrypted in-transit messages for offline users. Messages are always encrypted before leaving the originators device, and nobody else than the intended recipient can decrypt messages in transit.
 
-The Propagation Nodes also distribute copies of messages between each other, such that even the failure of almost every node in the network will still allow users to sync their waiting messages. If all Propagation Nodes disappear or are destroyed, users can still communicate directly. Reticulum and LXMF will degrade gracefully all the way down to single users communicating directly via long-range data radios. Anyone can start up new propagation nodes and integrate them into existing networks without permission or coordination. Even a small and cheap device like a Rasperry Pi can handle messages for millions of users. LXMF networks are designed to be quite resilient, as long as there are people using them."""
+The Propagation Nodes also distribute copies of messages between each other, such that even the failure of almost every node in the network will still allow users to sync their waiting messages. If all Propagation Nodes disappear or are destroyed, users can still communicate directly.\n\nReticulum and LXMF will degrade gracefully all the way down to single users communicating directly via long-range data radios. Anyone can start up new propagation nodes and integrate them into existing networks without permission or coordination. Even a small and cheap device like a Rasperry Pi can handle messages for millions of users. LXMF networks are designed to be quite resilient, as long as there are people using them."""
 
             guide_text6 = """
-[size=18dp][b]Packets Find A Way[/b][/size][size=5dp]\n \n[/size]Connections in Reticulum networks can be wired or wireless, span many intermediary hops, run over fast links or ultra-low bandwidth radio, tunnel over the Invisible Internet (I2P), private networks, satellite connections, serial lines or anything else that Reticulum can carry data over. In most cases it will not be possible to know what path data takes in a Reticulum network, and no transmitted packets carries any identifying characteristics, apart from a destination address. There is no source addresses in Reticulum. As long as you do not reveal any connecting details between your person and your LXMF address, you can remain anonymous. Sending messages to others does not reveal [i]your[/i] address to anyone else than the intended recipient."""
+[size=18dp][b]Packets Find A Way[/b][/size][size=5dp]\n \n[/size]Connections in Reticulum networks can be wired or wireless, span many intermediary hops, run over fast links or ultra-low bandwidth radio, tunnel over the Invisible Internet (I2P), private networks, satellite connections, serial lines or anything else that Reticulum can carry data over.\n\nIn most cases it will not be possible to know what path packets takes in a Reticulum network, and apart from a destination hash, no transmitted packets carries any identifying characteristics. In Reticulum, [i]there is no source addresses[/i].\n\nAs long as you do not reveal any connecting details between your person and your LXMF address, you can remain anonymous. Sending messages to others does not reveal [i]your[/i] address to anyone else than the intended recipient."""
 
             guide_text7 = """
-[size=18dp][b]Be Yourself, Be Unknown, Stay Free[/b][/size][size=5dp]\n \n[/size]Even with the above characteristics in mind, you [b]must remember[/b] that LXMF and Reticulum is not a technology that can guarantee anonymising connections that are already de-anonymised! If you use openCom Companion to connect to TCP Reticulum hubs over the clear Internet, from a network that can be tied to your personal identity, an adversary may learn that you are generating LXMF traffic. If you want to avoid this, it is recommended to use I2P to connect to Reticulum hubs on the Internet. Or only connecting from within pure Reticulum networks, that take one or more hops to reach connections that span the Internet. This is a complex topic, with many more nuances than can be covered here. You are encouraged to ask on the various Reticulum discussion forums if you are in doubt.
-
-If you use Reticulum and LXMF on hardware that does not carry any identifiers tied to you, it is possible to establish a completely free and anonymous communication system with Reticulum and LXMF clients."""
+[size=18dp][b]Be Yourself, Be Unknown, Stay Free[/b][/size][size=5dp]\n \n[/size]Even with the above characteristics in mind, you [b]must remember[/b] that LXMF and Reticulum is not a technology that can guarantee anonymising connections that are already de-anonymised! If you use openCom Companion to connect to TCP Reticulum hubs over the clear Internet, from a network that can be tied to your personal identity, an adversary may learn that you are generating LXMF traffic. If you want to avoid this, it is recommended to use I2P to connect to Reticulum hubs on the Internet. Or only connecting from within pure Reticulum networks, that take one or more hops to reach connections that span the Internet. This is a complex topic, with many more nuances than can be covered here. You are encouraged to ask on the various Reticulum discussion forums if you are in doubt. If you use Reticulum and LXMF on hardware that does not carry any identifiers tied to you, it is possible to establish a completely free and identification-less communication system with Reticulum and LXMF clients."""
         
             guide_text8 = """"""
 
             guide_text9 = """
-[size=18dp][b]Please Support The Upstream Project[/b][/size][size=5dp]\n \n[/size]It took Mark Qvist more than seven years to design and built the entire ecosystem of software and hardware that supports openCom Companion and the openCom line of RNodes. If this project is valuable to you, please go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support his project with a donation. Every donation directly makes the entire Reticulum project possible.
-
-Thank you very much for using Free Communications Systems.
+[size=18dp][b]Please Support The Upstream Project[/b][/size][size=5dp]\n \n[/size]It took Mark Qvist more than seven years to design and built the entire ecosystem of software and hardware that supports openCom Companion and the openCom line of RNodes. If this project is valuable to you, please go to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support his project with a donation. Every donation directly makes the entire Reticulum project possible. Thank you very much for using Free Communications Systems.
 """
             info1 = guide_text1
             info2 = guide_text8
             info3 = guide_text2
             info4 = guide_text3
+            info10 = guide_text10
             info5 = guide_text4
             info6 = guide_text5
             info7 = guide_text6
@@ -6107,6 +6202,7 @@ Thank you very much for using Free Communications Systems.
                 info7 = "[color=#"+dark_theme_text_color+"]"+info7+"[/color]"
                 info8 = "[color=#"+dark_theme_text_color+"]"+info8+"[/color]"
                 info9 = "[color=#"+dark_theme_text_color+"]"+info9+"[/color]"
+                info10 = "[color=#"+dark_theme_text_color+"]"+info10+"[/color]"
             self.guide_screen.ids.guide_info1.text = info1
             self.guide_screen.ids.guide_info2.text = info2
             self.guide_screen.ids.guide_info3.text = info3
@@ -6116,6 +6212,7 @@ Thank you very much for using Free Communications Systems.
             self.guide_screen.ids.guide_info7.text = info7
             self.guide_screen.ids.guide_info8.text = info8
             self.guide_screen.ids.guide_info9.text = info9
+            self.guide_screen.ids.guide_info10.text = info10
             self.guide_screen.ids.guide_info9.bind(on_ref_press=link_exec)
             self.guide_screen.ids.guide_scrollview.effect_cls = ScrollEffect
 

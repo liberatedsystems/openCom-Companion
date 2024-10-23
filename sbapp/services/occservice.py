@@ -38,10 +38,12 @@ if RNS.vendor.platformutils.get_platform() == "android":
     AndroidString = autoclass('java.lang.String')
     NotificationManager = autoclass('android.app.NotificationManager')
     Context = autoclass('android.content.Context')
+    JString = autoclass('java.lang.String')
 
     if android_api_version >= 26:
         NotificationBuilder = autoclass('android.app.Notification$Builder')
         NotificationChannel = autoclass('android.app.NotificationChannel')
+        RingtoneManager = autoclass('android.media.RingtoneManager')
 
     from usb4a import usb
     from usbserial4a import serial4a
@@ -89,33 +91,39 @@ class SidebandService():
 
             self.notification_channel = NotificationChannel(channel_id, channel_name, NotificationManager.IMPORTANCE_DEFAULT)
             self.notification_channel.enableVibration(True)
+            self.notification_channel.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), None)
             self.notification_channel.setShowBadge(True)
             self.notification_service.createNotificationChannel(self.notification_channel)
 
             notification = NotificationBuilder(self.app_context, channel_id)
             notification.setContentTitle(title)
             notification.setContentText(AndroidString(content))
+            notification.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
             
             # if group != None:
             #     notification.setGroup(group_id)
 
             if not self.notification_small_icon:
-                path = self.sideband.notification_icon
+                # path = self.sideband.notification_icon
+                path = self.sideband.notif_icon_black
                 bitmap = BitmapFactory.decodeFile(path)
                 self.notification_small_icon = Icon.createWithBitmap(bitmap)
 
             notification.setSmallIcon(self.notification_small_icon)
+            # notification.setLargeIcon(self.notification_small_icon)
 
             # large_icon_path = self.sideband.icon
             # bitmap_icon = BitmapFactory.decodeFile(large_icon_path)
             # notification.setLargeIcon(bitmap_icon)
 
-            if not self.notification_intent:
-                notification_intent = Intent(self.app_context, python_act)
-                notification_intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                notification_intent.setAction(Intent.ACTION_MAIN)
-                notification_intent.addCategory(Intent.CATEGORY_LAUNCHER)
-                self.notification_intent = PendingIntent.getActivity(self.app_context, 0, notification_intent, 0)
+            notification_intent = Intent(self.app_context, python_act)
+            notification_intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            notification_intent.setAction(Intent.ACTION_MAIN)
+            notification_intent.addCategory(Intent.CATEGORY_LAUNCHER)
+            if context_id != None:
+                cstr = f"conversation.{context_id}"
+                notification_intent.putExtra(JString("intent_action"), JString(cstr))
+            self.notification_intent = PendingIntent.getActivity(self.app_context, 0, notification_intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT)
 
             notification.setContentIntent(self.notification_intent)
             notification.setAutoCancel(True)
@@ -148,6 +156,18 @@ class SidebandService():
                 return False
 
         return True
+
+    def update_power_restrictions(self):
+        package_name = "io.unsigned.sideband"
+        if RNS.vendor.platformutils.is_android():
+            if android_api_version >= 28:
+                if self.power_manager != None:
+                    if self.power_manager.isIgnoringBatteryOptimizations(package_name):
+                        self.power_restricted = False
+                    else:
+                        self.power_restricted = True
+
+                    self.sideband.setstate("android.power_restricted", self.power_restricted)
 
     def android_location_callback(self, **kwargs):
         self._raw_gps = kwargs
@@ -200,6 +220,7 @@ class SidebandService():
         self.app_context = None
         self.wifi_manager = None
         self.power_manager = None
+        self.power_restricted = False
         self.usb_devices = []
         self.usb_device_filter = SidebandService.usb_device_filter
 
@@ -235,6 +256,7 @@ class SidebandService():
 
         self.sideband.start()
         self.update_connectivity_type()
+        self.update_power_restrictions()
         
         if RNS.vendor.platformutils.is_android():
             RNS.log("Discovered USB devices: "+str(self.usb_devices), RNS.LOG_EXTREME)
@@ -354,7 +376,13 @@ class SidebandService():
                 else:
                     rs = "Interface Down"
 
-                stat += "[b]openCom device[/b]\n{rs}\n\n".format(rs=rs)
+                bs = ""
+                bat_state = self.sideband.interface_rnode.get_battery_state_string()
+                bat_percent = self.sideband.interface_rnode.get_battery_percent()
+                if bat_state != "unknown":
+                    bs = f"\nBattery at {bat_percent}%"
+
+                stat += f"[b]openCom device[/b]\n{rs}{bs}\n\n"
 
             if self.sideband.interface_modem != None:
                 if self.sideband.interface_modem.online:

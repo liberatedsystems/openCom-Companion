@@ -89,13 +89,13 @@ MDNavigationLayout:
                                 on_release: root.ids.screen_manager.app.announces_action(self)
 
                                                        
-                        OneLineIconListItem:
-                            text: "Local Broadcasts"
-                            on_release: root.ids.screen_manager.app.broadcasts_action(self)
+                        # OneLineIconListItem:
+                        #     text: "Local Broadcasts"
+                        #     on_release: root.ids.screen_manager.app.broadcasts_action(self)
                         
-                            IconLeftWidget:
-                                icon: "radio-tower"
-                                on_release: root.ids.screen_manager.app.broadcasts_action(self)
+                        #     IconLeftWidget:
+                        #         icon: "radio-tower"
+                        #         on_release: root.ids.screen_manager.app.broadcasts_action(self)
 
                                                        
                         OneLineIconListItem:
@@ -801,6 +801,14 @@ MDScreen:
 
                 MDLabel:
                     id: guide_info4
+                    markup: True
+                    text: ""
+                    size_hint_y: None
+                    text_size: self.width, None
+                    height: self.texture_size[1]
+
+                MDLabel:
+                    id: guide_info10
                     markup: True
                     text: ""
                     size_hint_y: None
@@ -1685,6 +1693,22 @@ MDScreen:
                     height: dp(48)
                     
                     MDLabel:
+                        text: "Use high-quality voice for PTT"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: settings_hq_ptt
+                        pos_hint: {"center_y": 0.3}
+                        disabled: False
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
                         text: "Use Home Node as Broadcast Repeater"
                         font_style: "H6"
 
@@ -1822,20 +1846,20 @@ MDScreen:
                         pos_hint: {"center_y": 0.3}
                         active: False
 
-                # MDBoxLayout:
-                #     orientation: "horizontal"
-                #     size_hint_y: None
-                #     padding: [0,0,dp(24),dp(0)]
-                #     height: dp(48)
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
                     
-                #     MDLabel:
-                #         text: "Allow Predictive Text"
-                #         font_style: "H6"
+                    MDLabel:
+                        text: "Block Predictive Text"
+                        font_style: "H6"
 
-                #     MDSwitch:
-                #         id: settings_allow_predictive_text
-                #         pos_hint: {"center_y": 0.3}
-                #         active: False
+                    MDSwitch:
+                        id: settings_block_predictive_text
+                        pos_hint: {"center_y": 0.3}
+                        active: False
 
                 # MDBoxLayout:
                 #     orientation: "vertical"
@@ -1844,7 +1868,7 @@ MDScreen:
                 #     padding: [0, dp(24), 0, dp(24)]
 
                 #     MDRectangleFlatIconButton:
-                #         id: hardware_rnode_button
+                #         id: input_language_button
                 #         icon: "translate"
                 #         text: "Input Languages"
                 #         padding: [dp(0), dp(14), dp(0), dp(14)]
@@ -2576,6 +2600,21 @@ MDScreen:
 
                     MDSwitch:
                         id: hardware_rnode_bluetooth
+                        pos_hint: {"center_y": 0.3}
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
+                        text: "Device requires BLE"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: hardware_rnode_ble
                         pos_hint: {"center_y": 0.3}
                         active: False
 

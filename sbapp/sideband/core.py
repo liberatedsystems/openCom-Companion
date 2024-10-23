@@ -151,7 +151,9 @@ class SidebandCore():
         self.default_lxm_limit = 128*1000
         self.state_db = {}
         self.state_lock = Lock()
+        self.message_router = None
         self.rpc_connection = None
+        self.rpc_lock = Lock()
         self.service_stopped = False
         self.service_context = service_context
         self.owner_service = owner_service
@@ -198,6 +200,7 @@ class SidebandCore():
         self.icon_32           = self.asset_dir+"/icon_32.png"
         self.icon_macos        = self.asset_dir+"/icon_macos.png"
         self.notification_icon = self.asset_dir+"/notification_icon.png"
+        self.notif_icon_black  = self.asset_dir+"/notification_icon_black.png"
 
         os.environ["TELEMETER_GEOID_PATH"] = os.path.join(self.asset_dir, "geoids")
 
@@ -218,6 +221,7 @@ class SidebandCore():
         self.last_lxmf_announce = 0
         self.last_if_change_announce = 0
         self.interface_local_adding = False
+        self.interface_rnode_adding = False
         self.next_auto_announce = time.time() + 60*(random.random()*(SidebandCore.AUTO_ANNOUNCE_RANDOM_MAX-SidebandCore.AUTO_ANNOUNCE_RANDOM_MIN)+SidebandCore.AUTO_ANNOUNCE_RANDOM_MIN)
 
         try:
@@ -482,6 +486,7 @@ class SidebandCore():
         self.config["hw_rnode_beacondata"] = None
         self.config["hw_rnode_bt_device"] = None
         self.config["hw_rnode_bluetooth"] = False
+        self.config["hw_rnode_ble"] = False
         self.config["hw_modem_baudrate"] = 57600
         self.config["hw_modem_databits"] = 8
         self.config["hw_modem_stopbits"] = 1
@@ -575,11 +580,15 @@ class SidebandCore():
             self.config["display_style_in_contact_list"] = False
         if not "lxm_limit_1mb" in self.config:
             self.config["lxm_limit_1mb"] = True
+        if not "hq_ptt" in self.config:
+            self.config["hq_ptt"] = False
 
         if not "input_language" in self.config:
             self.config["input_language"] = None
         if not "allow_predictive_text" in self.config:
             self.config["allow_predictive_text"] = False
+        if not "block_predictive_text" in self.config:
+            self.config["block_predictive_text"] = False
 
         if not "connect_transport" in self.config:
             self.config["connect_transport"] = False
@@ -655,6 +664,8 @@ class SidebandCore():
             self.config["hw_rnode_beacondata"] = None
         if not "hw_rnode_bluetooth" in self.config:
             self.config["hw_rnode_bluetooth"] = False
+        if not "hw_rnode_ble" in self.config:
+            self.config["hw_rnode_ble"] = False
         if not "hw_rnode_enable_framebuffer" in self.config:
             self.config["hw_rnode_enable_framebuffer"] = False
         if not "hw_rnode_bt_device" in self.config:
@@ -820,6 +831,7 @@ class SidebandCore():
                 self.update_ignore_invalid_stamps()
         except Exception as e:
             RNS.log("Error while reloading configuration: "+str(e), RNS.LOG_ERROR)
+            RNS.trace_exception(e)
 
     def __save_config(self):
         RNS.log("Saving openCom Companion configuration...", RNS.LOG_DEBUG)
@@ -925,12 +937,13 @@ class SidebandCore():
             RNS.log("No active propagation node configured")
         else:
             try:
-                self.active_propagation_node = dest
-                self.config["last_lxmf_propagation_node"] = dest
-                self.message_router.set_outbound_propagation_node(dest)
-                
-                RNS.log("Active propagation node set to: "+RNS.prettyhexrep(dest))
-                self.__save_config()
+                if self.message_router:
+                    self.active_propagation_node = dest
+                    self.config["last_lxmf_propagation_node"] = dest
+                    self.message_router.set_outbound_propagation_node(dest)
+                    
+                    RNS.log("Active propagation node set to: "+RNS.prettyhexrep(dest))
+                    self.__save_config()
             except Exception as e:
                 RNS.log("Error while setting LXMF propagation node: "+str(e), RNS.LOG_ERROR)
 
@@ -1263,7 +1276,8 @@ class SidebandCore():
             self.message_router.handle_outbound(message)
         else:
             if message.state == LXMF.LXMessage.DELIVERED:
-                self.setpersistent(f"telemetry.{RNS.hexrep(message.destination_hash, delimit=False)}.last_request_success_timebase", message.request_timebase)
+                delivery_timebase = int(time.time())
+                self.setpersistent(f"telemetry.{RNS.hexrep(message.destination_hash, delimit=False)}.last_request_success_timebase", delivery_timebase)
                 self.setstate(f"telemetry.{RNS.hexrep(message.destination_hash, delimit=False)}.request_sending", False)
                 if message.destination_hash == self.config["telemetry_collector"]:
                     self.pending_telemetry_request = False
@@ -1278,13 +1292,8 @@ class SidebandCore():
         else:
             if self.is_client:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-
-                    self.rpc_connection.send({"request_latest_telemetry": {"from_addr": from_addr}})
-                    response = self.rpc_connection.recv()
-                    return response
-                
+                    return self.service_rpc_request({"request_latest_telemetry": {"from_addr": from_addr}})
+                    
                 except Exception as e:
                     RNS.log("Error while requesting latest telemetry over RPC: "+str(e), RNS.LOG_DEBUG)
                     RNS.trace_exception(e)
@@ -1357,17 +1366,12 @@ class SidebandCore():
         else:
             if self.is_client:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-
-                    self.rpc_connection.send({"send_latest_telemetry": {
+                    return self.service_rpc_request({"send_latest_telemetry": {
                         "to_addr": to_addr,
                         "stream": stream,
                         "is_authorized_telemetry_request": is_authorized_telemetry_request}
                     })
-                    response = self.rpc_connection.recv()
-                    return response
-                
+
                 except Exception as e:
                     RNS.log("Error while sending latest telemetry over RPC: "+str(e), RNS.LOG_DEBUG)
                     RNS.trace_exception(e)
@@ -1545,7 +1549,7 @@ class SidebandCore():
                         RNS.log("Service heartbeat did not recover after retry", RNS.LOG_DEBUG)
                         return False
                     else:
-                        RNS.log("Service heartbeat recovered at"+str(time), RNS.LOG_DEBUG)
+                        RNS.log("Service heartbeat recovered at"+str(now), RNS.LOG_DEBUG)
                         return True
                 else:
                     return True
@@ -1575,11 +1579,7 @@ class SidebandCore():
                         return True
                     else:
                         def set():
-                            if self.rpc_connection == None:
-                                self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-                            self.rpc_connection.send({"setstate": (prop, val)})
-                            response = self.rpc_connection.recv()
-                            return response
+                            return self.service_rpc_request({"setstate": (prop, val)})
 
                         try:
                             set()
@@ -1601,11 +1601,7 @@ class SidebandCore():
                 return True
             else:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-                    self.rpc_connection.send({"latest_telemetry": (latest_telemetry, latest_packed_telemetry)})
-                    response = self.rpc_connection.recv()
-                    return response
+                    return self.service_rpc_request({"latest_telemetry": (latest_telemetry, latest_packed_telemetry)})
                 except Exception as e:
                     RNS.log("Error while setting telemetry over RPC: "+str(e), RNS.LOG_DEBUG)
                     return False
@@ -1622,11 +1618,7 @@ class SidebandCore():
                 return True
             else:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-                    self.rpc_connection.send({"set_debug": debug})
-                    response = self.rpc_connection.recv()
-                    return response
+                    return self.service_rpc_request({"set_debug": debug})
                 except Exception as e:
                     RNS.log("Error while setting log level over RPC: "+str(e), RNS.LOG_DEBUG)
                     return False
@@ -1640,14 +1632,25 @@ class SidebandCore():
                 return True
             else:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-                    self.rpc_connection.send({"set_ui_recording": recording})
-                    response = self.rpc_connection.recv()
-                    return response
+                    return self.service_rpc_request({"set_ui_recording": recording})
                 except Exception as e:
                     RNS.log("Error while setting UI recording status over RPC: "+str(e), RNS.LOG_DEBUG)
                     return False
+
+    def service_rpc_request(self, request):
+        # RNS.log("Running service RPC call: "+str(request), RNS.LOG_DEBUG)
+        try:
+            with self.rpc_lock:
+                if self.rpc_connection == None:
+                    self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
+                self.rpc_connection.send(request)
+                response = self.rpc_connection.recv()
+                return response
+
+        except Exception as e:
+            if not type(e) == ConnectionRefusedError:
+                RNS.log(f"An error occurred while executing the service RPC request: {request}", RNS.LOG_ERROR)
+                RNS.log(f"The contained exception was: {e}", RNS.LOG_ERROR)
 
     def getstate(self, prop, allow_cache=False):
         with self.state_lock:
@@ -1666,11 +1669,7 @@ class SidebandCore():
                             return None
                     else:
                         try:
-                            if self.rpc_connection == None:
-                                self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-                            self.rpc_connection.send({"getstate": prop})
-                            response = self.rpc_connection.recv()
-                            return response
+                            return self.service_rpc_request({"getstate": prop})
 
                         except Exception as e:
                             RNS.log("Error while retrieving state "+str(prop)+" over RPC: "+str(e), RNS.LOG_DEBUG)
@@ -1705,11 +1704,7 @@ class SidebandCore():
                 return self._get_plugins_info()
             else:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-                    self.rpc_connection.send({"get_plugins_info": True})
-                    response = self.rpc_connection.recv()
-                    return response
+                    return self.service_rpc_request({"get_plugins_info": True})
                 except Exception as e:
                     ed = "Error while getting plugins info over RPC: "+str(e)
                     RNS.log(ed, RNS.LOG_DEBUG)
@@ -1744,11 +1739,7 @@ class SidebandCore():
                 return self._get_destination_establishment_rate(destination_hash)
             else:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-                    self.rpc_connection.send({"get_destination_establishment_rate": destination_hash})
-                    response = self.rpc_connection.recv()
-                    return response
+                    return self.service_rpc_request({"get_destination_establishment_rate": destination_hash})
                 except Exception as e:
                     ed = "Error while getting destination link etablishment rate over RPC: "+str(e)
                     RNS.log(ed, RNS.LOG_DEBUG)
@@ -1832,11 +1823,15 @@ class SidebandCore():
                                 elif "get_lxm_progress" in call:
                                     args = call["get_lxm_progress"]
                                     connection.send(self.get_lxm_progress(args["lxm_hash"]))
+                                elif "get_lxm_stamp_cost" in call:
+                                    args = call["get_lxm_stamp_cost"]
+                                    connection.send(self.get_lxm_stamp_cost(args["lxm_hash"]))
                                 else:
                                     connection.send(None)
 
                         except Exception as e:
                             RNS.log("Error on client RPC connection: "+str(e), RNS.LOG_ERROR)
+                            RNS.trace_exception(e)
                             try:
                                 connection.close()
                             except:
@@ -3185,6 +3180,25 @@ class SidebandCore():
                                         self.lxmf_announce(attached_interface=self.interface_local)
                                 threading.Thread(target=job, daemon=True).start()
 
+                    if hasattr(self, "interface_rnode") and self.interface_rnode != None:
+                        if len(self.interface_rnode.hw_errors) > 0:
+                            self.setpersistent("runtime.errors.rnode", self.interface_rnode.hw_errors[0])
+                            self.interface_rnode.hw_errors = []
+
+                            # if not self.interface_rnode_adding:
+                            #     RNS.log("Hardware error on RNodeInterface, scheduling re-init", RNS.LOG_DEBUG)
+                            #     if self.interface_rnode in RNS.Transport.interfaces:
+                            #         RNS.Transport.interfaces.remove(self.interface_rnode)
+                            #     del self.interface_rnode
+                            #     self.interface_rnode = None
+                            #     self.interface_rnode_adding = True
+                            #     def job():
+                            #         self.__add_rnodeinterface(delay=5)
+                            #         if self.config["start_announce"] == True:
+                            #             time.sleep(12)
+                            #             self.lxmf_announce(attached_interface=self.interface_rnode)
+                            #     threading.Thread(target=job, daemon=True).start()
+
                     if (now - last_multicast_lock_check > 120):
                         RNS.log("Checking multicast and wake locks", RNS.LOG_DEBUG)
                         self.owner_service.take_locks()
@@ -3503,6 +3517,167 @@ class SidebandCore():
             self.interface_local = None
             self.interface_local_adding = False
 
+    def __add_rnodeinterface(self, delay=None):
+        self.interface_rnode_adding = True
+        if delay:
+            time.sleep(delay)
+
+        try:
+            RNS.log("Adding RNode Interface...", RNS.LOG_DEBUG)
+            target_device = None
+            if len(self.owner_app.usb_devices) > 0:
+                # TODO: Add more intelligent selection here
+                target_device = self.owner_app.usb_devices[0]
+
+            # if target_device or self.config["hw_rnode_bluetooth"]:
+            if target_device != None:
+                target_port = target_device["port"]
+            else:
+                target_port = None
+        
+            bt_device_name = None
+            ble_dispatcher = None
+            rnode_allow_bluetooth = False
+            if self.getpersistent("permissions.bluetooth"):
+                if self.config["hw_rnode_bluetooth"]:
+                    RNS.log("Allowing RNode bluetooth", RNS.LOG_DEBUG)
+                    rnode_allow_bluetooth = True
+                    ble_dispatcher = RNS.Interfaces.Android.RNodeMultiInterface.AndroidBLEDispatcher()
+                    if self.config["hw_rnode_bt_device"] != None:
+                        bt_device_name = self.config["hw_rnode_bt_device"]
+
+                else:
+                    RNS.log("Disallowing RNode bluetooth since config is disabled", RNS.LOG_DEBUG)
+                    rnode_allow_bluetooth = False
+            else:
+                RNS.log("Disallowing RNode bluetooth due to missing permission", RNS.LOG_DEBUG)
+                rnode_allow_bluetooth = False
+
+            if self.config["connect_rnode_ifac_netname"] == "":
+                ifac_netname = None
+            else:
+                ifac_netname = self.config["connect_rnode_ifac_netname"]
+
+            if self.config["connect_rnode_ifac_passphrase"] == "":
+                ifac_netkey = None
+            else:
+                ifac_netkey = self.config["connect_rnode_ifac_passphrase"]
+
+            if self.config["hw_rnode_atl_short"] == "":
+                atl_short = None
+            else:
+                atl_short = self.config["hw_rnode_atl_short"]
+
+            if self.config["hw_rnode_atl_long"] == "":
+                atl_long = None
+            else:
+                atl_long = self.config["hw_rnode_atl_long"]
+
+            if self.config["hw_rnode_secondary_modem"]:
+                if self.config["hw_rnode_sec_atl_short"] == "":
+                    sec_atl_short = None
+                else:
+                    sec_atl_short = self.config["hw_rnode_sec_atl_short"]
+
+                if self.config["hw_rnode_sec_atl_long"] == "":
+                    sec_atl_long = None
+                else:
+                    sec_atl_long = self.config["hw_rnode_sec_atl_long"]
+
+                subint_config = [[0]*11 for i in range(2)]
+
+                # Primary modem
+                subint_config[0][0] = "Primary modem" # Name of interface
+                subint_config[0][1] = 0 # Virtual port
+                subint_config[0][2] = self.config["hw_rnode_frequency"]
+                subint_config[0][3] = self.config["hw_rnode_bandwidth"]
+                subint_config[0][4] = self.config["hw_rnode_tx_power"]
+                subint_config[0][5] = self.config["hw_rnode_spreading_factor"]
+                subint_config[0][6] = self.config["hw_rnode_coding_rate"]
+                subint_config[0][7] = False # flow control hardcoded to false for now
+                subint_config[0][8] = atl_short 
+                subint_config[0][9] = atl_long 
+                subint_config[0][10] = True # outgoing
+
+                # Secondary modem
+                subint_config[1][0] = "Secondary modem" # Name of interface
+                subint_config[1][1] = 1 # Virtual port
+                subint_config[1][2] = self.config["hw_rnode_sec_frequency"]
+                subint_config[1][3] = self.config["hw_rnode_sec_bandwidth"]
+                subint_config[1][4] = self.config["hw_rnode_sec_tx_power"]
+                subint_config[1][5] = self.config["hw_rnode_sec_spreading_factor"]
+                subint_config[1][6] = self.config["hw_rnode_coding_rate"]
+                subint_config[1][7] = False # flow control hardcoded to false for now
+                subint_config[0][8] = sec_atl_short
+                subint_config[0][9] = sec_atl_long
+                subint_config[1][10] = True # outgoing
+
+                rnodeinterface = RNS.Interfaces.Android.RNodeMultiInterface.RNodeMultiInterface(
+                        RNS.Transport,
+                        "RNodeInterface",
+                        target_port,
+                        subint_config,
+                        ble_dispatcher = ble_dispatcher,
+                        allow_bluetooth = rnode_allow_bluetooth,
+                        target_device_name = bt_device_name,
+                   )
+
+                rnodeinterface.start()
+            else:
+                rnodeinterface = RNS.Interfaces.Android.RNodeInterface.RNodeInterface(
+                        RNS.Transport,
+                        "RNodeInterface",
+                        target_port,
+                        frequency = self.config["hw_rnode_frequency"],
+                        bandwidth = self.config["hw_rnode_bandwidth"],
+                        txpower = self.config["hw_rnode_tx_power"],
+                        sf = self.config["hw_rnode_spreading_factor"],
+                        cr = self.config["hw_rnode_coding_rate"],
+                        flow_control = None,
+                        id_interval = self.config["hw_rnode_beaconinterval"],
+                        id_callsign = self.config["hw_rnode_beacondata"],
+                        allow_bluetooth = rnode_allow_bluetooth,
+                        target_device_name = bt_device_name,
+                        st_alock = atl_short,
+                        lt_alock = atl_long,
+                    )
+
+                rnodeinterface.OUT = True
+
+            if RNS.Reticulum.transport_enabled():
+                if_mode = Interface.Interface.MODE_FULL
+                if self.config["connect_ifmode_rnode"] == "gateway":
+                    if_mode = Interface.Interface.MODE_GATEWAY
+                elif self.config["connect_ifmode_rnode"] == "access point":
+                    if_mode = Interface.Interface.MODE_ACCESS_POINT
+                elif self.config["connect_ifmode_rnode"] == "roaming":
+                    if_mode = Interface.Interface.MODE_ROAMING
+                elif self.config["connect_ifmode_rnode"] == "boundary":
+                    if_mode = Interface.Interface.MODE_BOUNDARY
+            else:
+                if_mode = None
+                
+            self.reticulum._add_interface(rnodeinterface, mode = if_mode, ifac_netname = ifac_netname, ifac_netkey = ifac_netkey)
+            self.interface_rnode = rnodeinterface
+
+            if rnodeinterface != None:
+                if len(rnodeinterface.hw_errors) > 0:
+                    self.setpersistent("startup.errors.rnode", rnodeinterface.hw_errors[0])
+
+            if self.config["hw_rnode_enable_framebuffer"] == True:
+                if self.interface_rnode.online:
+                    self.interface_rnode.display_image(sideband_fb_data)
+                    self.interface_rnode.enable_external_framebuffer()
+                else:
+                    self.interface_rnode.last_imagedata = sideband_fb_data
+            else:
+                if self.interface_rnode.online:
+                    self.interface_rnode.disable_external_framebuffer()
+
+        except Exception as e:
+            RNS.log("Error while adding RNode Interface. The contained exception was: "+str(e))
+            self.interface_rnode = None
+
     def _reticulum_log_debug(self, debug=False):
         self.log_verbose = debug
         if self.log_verbose:
@@ -3663,161 +3838,7 @@ class SidebandCore():
 
                 if self.config["connect_rnode"]:
                     self.setstate("init.loadingstate", "Starting RNode")
-                    try:
-                        RNS.log("Adding RNode Interface...", RNS.LOG_DEBUG)
-                        target_device = None
-                        if len(self.owner_app.usb_devices) > 0:
-                            # TODO: Add more intelligent selection here
-                            target_device = self.owner_app.usb_devices[0]
-
-                        # if target_device or self.config["hw_rnode_bluetooth"]:
-                        if target_device != None:
-                            target_port = target_device["port"]
-                        else:
-                            target_port = None
-                    
-                        bt_device_name = None
-                        ble_dispatcher = None
-                        rnode_allow_bluetooth = False
-                        if self.getpersistent("permissions.bluetooth"):
-                            if self.config["hw_rnode_bluetooth"]:
-                                RNS.log("Allowing RNode bluetooth", RNS.LOG_DEBUG)
-                                rnode_allow_bluetooth = True
-                                ble_dispatcher = RNS.Interfaces.Android.RNodeMultiInterface.AndroidBLEDispatcher()
-                                if self.config["hw_rnode_bt_device"] != None:
-                                    bt_device_name = self.config["hw_rnode_bt_device"]
-
-                            else:
-                                RNS.log("Disallowing RNode bluetooth since config is disabled", RNS.LOG_DEBUG)
-                                rnode_allow_bluetooth = False
-                        else:
-                            RNS.log("Disallowing RNode bluetooth due to missing permission", RNS.LOG_DEBUG)
-                            rnode_allow_bluetooth = False
-
-                        if self.config["connect_rnode_ifac_netname"] == "":
-                            ifac_netname = None
-                        else:
-                            ifac_netname = self.config["connect_rnode_ifac_netname"]
-
-                        if self.config["connect_rnode_ifac_passphrase"] == "":
-                            ifac_netkey = None
-                        else:
-                            ifac_netkey = self.config["connect_rnode_ifac_passphrase"]
-
-                        if self.config["hw_rnode_atl_short"] == "":
-                            atl_short = None
-                        else:
-                            atl_short = self.config["hw_rnode_atl_short"]
-
-                        if self.config["hw_rnode_atl_long"] == "":
-                            atl_long = None
-                        else:
-                            atl_long = self.config["hw_rnode_atl_long"]
-
-                        if self.config["hw_rnode_secondary_modem"]:
-                            if self.config["hw_rnode_sec_atl_short"] == "":
-                                sec_atl_short = None
-                            else:
-                                sec_atl_short = self.config["hw_rnode_sec_atl_short"]
-
-                            if self.config["hw_rnode_sec_atl_long"] == "":
-                                sec_atl_long = None
-                            else:
-                                sec_atl_long = self.config["hw_rnode_sec_atl_long"]
-
-                            subint_config = [[0]*11 for i in range(2)]
-
-                            # Primary modem
-                            subint_config[0][0] = "Primary modem" # Name of interface
-                            subint_config[0][1] = 0 # Virtual port
-                            subint_config[0][2] = self.config["hw_rnode_frequency"]
-                            subint_config[0][3] = self.config["hw_rnode_bandwidth"]
-                            subint_config[0][4] = self.config["hw_rnode_tx_power"]
-                            subint_config[0][5] = self.config["hw_rnode_spreading_factor"]
-                            subint_config[0][6] = self.config["hw_rnode_coding_rate"]
-                            subint_config[0][7] = False # flow control hardcoded to false for now
-                            subint_config[0][8] = atl_short 
-                            subint_config[0][9] = atl_long 
-                            subint_config[0][10] = True # outgoing
-
-                            # Secondary modem
-                            subint_config[1][0] = "Secondary modem" # Name of interface
-                            subint_config[1][1] = 1 # Virtual port
-                            subint_config[1][2] = self.config["hw_rnode_sec_frequency"]
-                            subint_config[1][3] = self.config["hw_rnode_sec_bandwidth"]
-                            subint_config[1][4] = self.config["hw_rnode_sec_tx_power"]
-                            subint_config[1][5] = self.config["hw_rnode_sec_spreading_factor"]
-                            subint_config[1][6] = self.config["hw_rnode_coding_rate"]
-                            subint_config[1][7] = False # flow control hardcoded to false for now
-                            subint_config[0][8] = sec_atl_short
-                            subint_config[0][9] = sec_atl_long
-                            subint_config[1][10] = True # outgoing
-
-                            rnodeinterface = RNS.Interfaces.Android.RNodeMultiInterface.RNodeMultiInterface(
-                                    RNS.Transport,
-                                    "RNodeInterface",
-                                    target_port,
-                                    subint_config,
-                                    ble_dispatcher = ble_dispatcher,
-                                    allow_bluetooth = rnode_allow_bluetooth,
-                                    target_device_name = bt_device_name,
-                               )
-
-                            rnodeinterface.start()
-                        else:
-                            rnodeinterface = RNS.Interfaces.Android.RNodeInterface.RNodeInterface(
-                                    RNS.Transport,
-                                    "RNodeInterface",
-                                    target_port,
-                                    frequency = self.config["hw_rnode_frequency"],
-                                    bandwidth = self.config["hw_rnode_bandwidth"],
-                                    txpower = self.config["hw_rnode_tx_power"],
-                                    sf = self.config["hw_rnode_spreading_factor"],
-                                    cr = self.config["hw_rnode_coding_rate"],
-                                    flow_control = None,
-                                    id_interval = self.config["hw_rnode_beaconinterval"],
-                                    id_callsign = self.config["hw_rnode_beacondata"],
-                                    allow_bluetooth = rnode_allow_bluetooth,
-                                    target_device_name = bt_device_name,
-                                    st_alock = atl_short,
-                                    lt_alock = atl_long,
-                                )
-
-                            rnodeinterface.OUT = True
-
-                        if RNS.Reticulum.transport_enabled():
-                            if_mode = Interface.Interface.MODE_FULL
-                            if self.config["connect_ifmode_rnode"] == "gateway":
-                                if_mode = Interface.Interface.MODE_GATEWAY
-                            elif self.config["connect_ifmode_rnode"] == "access point":
-                                if_mode = Interface.Interface.MODE_ACCESS_POINT
-                            elif self.config["connect_ifmode_rnode"] == "roaming":
-                                if_mode = Interface.Interface.MODE_ROAMING
-                            elif self.config["connect_ifmode_rnode"] == "boundary":
-                                if_mode = Interface.Interface.MODE_BOUNDARY
-                        else:
-                            if_mode = None
-                            
-                        self.reticulum._add_interface(rnodeinterface, mode = if_mode, ifac_netname = ifac_netname, ifac_netkey = ifac_netkey)
-                        self.interface_rnode = rnodeinterface
-
-                        if rnodeinterface != None:
-                            if len(rnodeinterface.hw_errors) > 0:
-                                self.setpersistent("startup.errors.rnode", rnodeinterface.hw_errors[0])
-
-                        if self.config["hw_rnode_enable_framebuffer"] == True:
-                            if self.interface_rnode.online:
-                                self.interface_rnode.display_image(sideband_fb_data)
-                                self.interface_rnode.enable_external_framebuffer()
-                            else:
-                                self.interface_rnode.last_imagedata = sideband_fb_data
-                        else:
-                            if self.interface_rnode.online:
-                                self.interface_rnode.disable_external_framebuffer()
-
-                    except Exception as e:
-                        RNS.log("Error while adding RNode Interface. The contained exception was: "+str(e))
-                        self.interface_rnode = None
+                    self.__add_rnodeinterface()
 
                 elif self.config["connect_serial"]:
                     self.setstate("init.loadingstate", "Starting Serial Interface")
@@ -4079,12 +4100,7 @@ class SidebandCore():
         else:
             if self.is_client:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-
-                    self.rpc_connection.send({"get_lxm_progress": {"lxm_hash": lxm_hash}})
-                    response = self.rpc_connection.recv()
-                    return response
+                    return self.service_rpc_request({"get_lxm_progress": {"lxm_hash": lxm_hash}})
                 
                 except Exception as e:
                     RNS.log("Error while getting LXM progress over RPC: "+str(e), RNS.LOG_DEBUG)
@@ -4105,12 +4121,37 @@ class SidebandCore():
             RNS.log("An error occurred while getting message transfer progress: "+str(e), RNS.LOG_ERROR)
             return None
 
+    def _service_get_lxm_stamp_cost(self, lxm_hash):
+        if not RNS.vendor.platformutils.is_android():
+            return False
+        else:
+            if self.is_client:
+                try:
+                    return self.service_rpc_request({"get_lxm_stamp_cost": { "lxm_hash": lxm_hash } })
+                
+                except Exception as e:
+                    RNS.log("Error while sending message over RPC: "+str(e), RNS.LOG_DEBUG)
+                    RNS.trace_exception(e)
+                    return False
+            else:
+                return False
+
     def get_lxm_stamp_cost(self, lxm_hash):
-        try:
-            return self.message_router.get_outbound_lxm_stamp_cost(lxm_hash)
-        except Exception as e:
-            RNS.log("An error occurred while getting message transfer stamp cost: "+str(e), RNS.LOG_ERROR)
-            return None
+        if self.allow_service_dispatch and self.is_client:
+            try:
+                return self._service_get_lxm_stamp_cost(lxm_hash)
+
+            except Exception as e:
+                RNS.log("Error while getting message transfer stamp cost: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
+                return False
+
+        else:
+            try:
+                return self.message_router.get_outbound_lxm_stamp_cost(lxm_hash)
+            except Exception as e:
+                RNS.log("An error occurred while getting message transfer stamp cost: "+str(e), RNS.LOG_ERROR)
+                return None
 
     def _service_send_message(self, content, destination_hash, propagation, skip_fields=False, no_display=False, attachment = None, image = None, audio = None):
         if not RNS.vendor.platformutils.is_android():
@@ -4118,10 +4159,7 @@ class SidebandCore():
         else:
             if self.is_client:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-
-                    self.rpc_connection.send({"send_message": {
+                    return self.service_rpc_request({"send_message": {
                         "content": content,
                         "destination_hash": destination_hash,
                         "propagation": propagation,
@@ -4131,8 +4169,6 @@ class SidebandCore():
                         "image": image,
                         "audio": audio}
                     })
-                    response = self.rpc_connection.recv()
-                    return response
                 
                 except Exception as e:
                     RNS.log("Error while sending message over RPC: "+str(e), RNS.LOG_DEBUG)
@@ -4147,17 +4183,12 @@ class SidebandCore():
         else:
             if self.is_client:
                 try:
-                    if self.rpc_connection == None:
-                        self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
-
-                    self.rpc_connection.send({"send_command": {
+                    return self.service_rpc_request({"send_command": {
                         "content": content,
                         "destination_hash": destination_hash,
                         "propagation": propagation}
                     })
-                    response = self.rpc_connection.recv()
-                    return response
-                
+
                 except Exception as e:
                     RNS.log("Error while sending command over RPC: "+str(e), RNS.LOG_DEBUG)
                     RNS.trace_exception(e)
@@ -4431,6 +4462,7 @@ class SidebandCore():
                 self.notify(title=self.peer_display_name(context_dest), content=notification_content, group="LXM", context_id=RNS.hexrep(context_dest, delimit=False))
             except Exception as e:
                 RNS.log("Could not post notification for received message: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
 
     def ptt_playback(self, message):
         ptt_timeout = 60
@@ -4529,7 +4561,7 @@ class SidebandCore():
         thread.start()
 
         self.setstate("core.started", True)
-        RNS.log("openCom Companion Core "+str(self)+" version "+str(self.version_str)+" started")
+        RNS.log("openCom Companion Core "+str(self)+" "+str(self.version_str)+" started")
 
     def stop_webshare(self):
         if self.webshare_server != None:
