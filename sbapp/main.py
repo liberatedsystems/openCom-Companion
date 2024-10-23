@@ -3800,14 +3800,14 @@ class SidebandApp(MDApp):
             self.sideband.config["hw_rnode_sec_channel_index"] -= 1
             if self.sideband.config["hw_rnode_sec_channel_index"] < 0:
                 self.sideband.config["hw_rnode_sec_channel_index"] = 0
-            channel = list(self.sideband.config["hw_rnode_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
+            channel = list(self.sideband.config["hw_rnode_sec_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
             primary_modem = False
 
         elif caller == self.hardware_rnode_screen.ids.hardware_rnode_sec_channel_inc:
             self.sideband.config["hw_rnode_sec_channel_index"] += 1
             if self.sideband.config["hw_rnode_sec_channel_index"] >= len(self.sideband.config["hw_rnode_sec_channels"].keys()):
                 self.sideband.config["hw_rnode_sec_channel_index"] = len(self.sideband.config["hw_rnode_sec_channels"].keys()) - 1
-            channel = list(self.sideband.config["hw_rnode_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
+            channel = list(self.sideband.config["hw_rnode_sec_channels"].keys())[self.sideband.config["hw_rnode_sec_channel_index"]]
             primary_modem = False
 
 

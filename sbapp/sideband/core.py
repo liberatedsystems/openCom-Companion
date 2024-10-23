@@ -448,10 +448,25 @@ class SidebandCore():
         self.config["hw_rnode_sec_preset"] = self.config["hw_rnode_presets"][0]
         self.config["hw_rnode_sec_channels"] = {
                 "Channel 1": 2400.8125,  # MHz
-                "Channel 2": 2402.8125,  # MHz
-                "Channel 3": 2404.8125,  # MHz
-                "Channel 4": 2406.8125,  # MHz
-                "Channel 5": 2408.8125,  # MHz
+                "Channel 2": 2403.8125,  # MHz
+                "Channel 3": 2406.8125,  # MHz
+                "Channel 4": 2409.8125,  # MHz
+                "Channel 5": 2412.8125,  # MHz
+                "Channel 6": 2420.8125,  # MHz
+                "Channel 7": 2423.8125,  # MHz
+                "Channel 8": 2426.8125,  # MHz
+                "Channel 9": 2429.8125,  # MHz
+                "Channel 10": 2432.8125,  # MHz
+                "Channel 11": 2440.8125,  # MHz
+                "Channel 12": 2443.8125,  # MHz
+                "Channel 13": 2446.8125,  # MHz
+                "Channel 14": 2449.8125,  # MHz
+                "Channel 15": 2452.8125,  # MHz
+                "Channel 16": 2470.8125,  # MHz
+                "Channel 17": 2473.8125,  # MHz
+                "Channel 18": 2476.8125,  # MHz
+                "Channel 19": 2479.8125,  # MHz
+                "Channel 20": 2482.8125,  # MHz
         }
         channel_keys = sorted(self.config["hw_rnode_sec_channels"].keys())
         self.config["hw_rnode_sec_channel_index"] = 0
@@ -462,7 +477,7 @@ class SidebandCore():
         self.config["hw_rnode_sec_bandwidth"] = self.config["hw_rnode_sec_presets_cfg"][0][0]
         self.config["hw_rnode_sec_spreading_factor"] = self.config["hw_rnode_sec_presets_cfg"][0][1]
         self.config["hw_rnode_sec_coding_rate"] = self.config["hw_rnode_sec_presets_cfg"][0][2]
-        self.config["hw_rnode_sec_tx_power"] = 5
+        self.config["hw_rnode_sec_tx_power"] = 15
         self.config["hw_rnode_beaconinterval"] = None
         self.config["hw_rnode_beacondata"] = None
         self.config["hw_rnode_bt_device"] = None
