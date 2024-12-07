@@ -4096,14 +4096,14 @@ class SidebandApp(MDApp):
 
         self.sideband.save_configuration()
    
-    def hardware_rnode_ble_toggle_action(self, sender=None, event=None):
-        if sender.active:
-            self.sideband.config["hw_rnode_ble"] = True
-            self.request_bluetooth_permissions()
-        else:
-            self.sideband.config["hw_rnode_ble"] = False
+    #def hardware_rnode_ble_toggle_action(self, sender=None, event=None):
+    #    if sender.active:
+    #        self.sideband.config["hw_rnode_ble"] = True
+    #        self.request_bluetooth_permissions()
+    #    else:
+    #        self.sideband.config["hw_rnode_ble"] = False
 
-        self.sideband.save_configuration()
+    #    self.sideband.save_configuration()
    
     def hardware_rnode_framebuffer_toggle_action(self, sender=None, event=None):
         if sender.active:
@@ -4210,7 +4210,7 @@ class SidebandApp(MDApp):
                 t_btd = ""
 
             self.hardware_rnode_screen.ids.hardware_rnode_bluetooth.active = self.sideband.config["hw_rnode_bluetooth"]
-            self.hardware_rnode_screen.ids.hardware_rnode_ble.active = self.sideband.config["hw_rnode_ble"]
+            #self.hardware_rnode_screen.ids.hardware_rnode_ble.active = self.sideband.config["hw_rnode_ble"]
             self.hardware_rnode_screen.ids.hardware_rnode_framebuffer.active = self.sideband.config["hw_rnode_enable_framebuffer"]
 
             self.hardware_rnode_screen.ids.hardware_rnode_advanced_cfg.active = self.sideband.config["hw_rnode_advanced_cfg"]
@@ -4277,7 +4277,7 @@ class SidebandApp(MDApp):
             self.hardware_rnode_screen.ids.hardware_rnode_beaconinterval.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_beacondata.bind(on_text_validate=save_connectivity)
             self.hardware_rnode_screen.ids.hardware_rnode_bluetooth.bind(active=self.hardware_rnode_bt_toggle_action)
-            self.hardware_rnode_screen.ids.hardware_rnode_ble.bind(active=self.hardware_rnode_ble_toggle_action)
+            #self.hardware_rnode_screen.ids.hardware_rnode_ble.bind(active=self.hardware_rnode_ble_toggle_action)
             self.hardware_rnode_screen.ids.hardware_rnode_framebuffer.bind(active=self.hardware_rnode_framebuffer_toggle_action)
 
             self.hardware_rnode_screen.ids.hardware_rnode_advanced_cfg.bind(active=self.hardware_rnode_advanced_cfg_toggle_action)

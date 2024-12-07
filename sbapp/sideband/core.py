@@ -3542,7 +3542,6 @@ class SidebandCore():
                 if self.config["hw_rnode_bluetooth"]:
                     RNS.log("Allowing RNode bluetooth", RNS.LOG_DEBUG)
                     rnode_allow_bluetooth = True
-                    ble_dispatcher = RNS.Interfaces.Android.RNodeMultiInterface.AndroidBLEDispatcher()
                     if self.config["hw_rnode_bt_device"] != None:
                         bt_device_name = self.config["hw_rnode_bt_device"]
 
@@ -3617,8 +3616,9 @@ class SidebandCore():
                         "RNodeInterface",
                         target_port,
                         subint_config,
-                        ble_dispatcher = ble_dispatcher,
-                        allow_bluetooth = rnode_allow_bluetooth,
+                        allow_bluetooth = False,
+                        force_ble = rnode_allow_bluetooth,
+                        ble_name = bt_device_name,
                         target_device_name = bt_device_name,
                    )
 
@@ -3636,8 +3636,9 @@ class SidebandCore():
                         flow_control = None,
                         id_interval = self.config["hw_rnode_beaconinterval"],
                         id_callsign = self.config["hw_rnode_beacondata"],
-                        allow_bluetooth = rnode_allow_bluetooth,
-                        target_device_name = bt_device_name,
+                        allow_bluetooth = False,
+                        force_ble = rnode_allow_bluetooth,
+                        ble_name = bt_device_name,
                         st_alock = atl_short,
                         lt_alock = atl_long,
                     )
