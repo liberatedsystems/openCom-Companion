@@ -39,13 +39,15 @@ Sideband can run on most computing devices, but installation methods vary by dev
 
 ## On Android
 
-For your Android devices, you can install Sideband through F-Droid, by adding the [Between the Borders Repo](https://reticulum.betweentheborders.com/fdroid/repo/), or you can download an [APK on the latest release](https://github.com/markqvist/Sideband/releases/latest) page. Both sources are signed with the same release keys, and can be used interchangably.
+For your Android devices, you can install Sideband through F-Droid, by adding the [Between the Borders Repo](https://reticulum.betweentheborders.com/fdroid/repo/), or you can download an [APK on the latest release page](https://github.com/markqvist/Sideband/releases/latest). Both sources are signed with the same release keys, and can be used interchangably.
 
 After the application is installed on your Android device, it is also possible to pull updates directly through the **Repository** section of the application.
 
 ## On Linux
 
 On all Linux-based operating systems, Sideband is available as a `pipx`/`pip` package. This installation method **includes desktop integration**, so that Sideband will show up in your applications menu and launchers. Below are install steps for the most common recent Linux distros. For Debian 11, see the end of this section.
+
+**Please note!** The very latest Python release, Python 3.13 is currently **not** compatible with the Kivy framework, that Sideband uses to render its user interface. If your Linux distribution uses Python 3.13 as its default Python installation, you will need to install an earlier version as well. Using [the latest release of Python 3.12](https://www.python.org/downloads/release/python-3127/) is recommended.
 
 You will first need to install a few dependencies for audio messaging and Codec2 support to work:
 
@@ -66,6 +68,10 @@ Once those are installed, install the Sideband application itself:
 ```bash
 # Finally, install Sideband using pipx:
 pipx install sbapp
+
+# If you need to specify a specific Python version,
+# use something like the following:
+pipx install sbapp --python python3.12
 ```
 
 After installation, you can now run Sideband in a number of different ways:
@@ -109,8 +115,9 @@ pip install sbapp --break-system-packages
 # any of the normal UI dependencies:
 pip install sbapp --no-dependencies
 
-# In the above case, you will still need to
-# manually install the RNS and LXMF dependencies:
+# In the case of using --no-dependencies, you
+# will still need to manually install the RNS
+# and LXMF dependencies:
 pip install rns lxmf
 
 # Install Sideband on Debian 11 and derivatives:
@@ -154,27 +161,53 @@ sideband
 
 ## On macOS
 
-On macOS, you can install Sideband with `pip3` or `pipx`. Due to the many different potential Python versions and install paths across macOS versions, the easiest install method is to use `pipx`.
+To install Sideband on macOS, you have two options available:
 
-If you don't already have the `pipx` package manager installed, it can be installed via [Homebrew](https://brew.sh/) with `brew install pipx`.
+1. An easy to install pre-built disk image package
+2. A source package install for more advanced setups
+
+#### Prebuilt Executable
+
+You can download a disk image with Sideband for macOS (ARM and Intel) from the [latest release page](https://github.com/markqvist/Sideband/releases/latest). Simply mount the downloaded disk image, drag `Sideband` to your applications folder, and run it.
+
+**Please note!** If you have application install restrictions enabled on your macOS install, or have restricted your system to only allow installation of application from the Apple App Store, you will need to create an exception for Sideband. The Sideband application will *never* be distributed with an Apple-controlled digital signature, as this will allow Apple to simply disable Sideband from running on your system if they decide to do so, or are forced to by authorities or other circumstances.
+
+If you install Sideband from the DMG file, it is still recommended to install the `rns` package via the `pip` or `pipx` package manager, so you can use the RNS utility programs, like `rnstatus` to see interface and connectivity status from the terminal. If you already have Python and `pip` installed on your system, simply open a terminal window and use one of the following commands:
 
 ```bash
-# Install Sideband and dependencies on macOS using pipx:
-pipx install sbapp
-pipx ensurepath
+# Install Reticulum and utilities with pip:
+pip3 install rns
 
-# Run it
-sideband
+# On some versions, you may need to use the
+# flag --break-system-packages to install:
+pip3 install rns --break-system-packages
 ```
 
-Or, if you prefer to use `pip` directly, follow the instructions below. In this case, if you have not already installed Python and `pip3` on your macOS system, [download and install](https://www.python.org/downloads/) the latest version first.
+If you do not have Python and `pip` available, [download and install it](https://www.python.org/downloads/) first.
+
+#### Source Package Install
+
+For more advanced setups, including the ability to run Sideband in headless daemon mode, enable debug logging output, configuration import and export and more, you may want to install it from the source package via `pip` instead.
+
+**Please note!** The very latest Python release, Python 3.13 is currently **not** compatible with the Kivy framework, that Sideband uses to render its user interface. If your version of macOS uses Python 3.13 as its default Python installation, you will need to install an earlier version as well. Using [the latest release of Python 3.12](https://www.python.org/downloads/release/python-3127/) is recommended.
+
+To install Sideband via `pip`, follow these instructions:
 
 ```bash
 # Install Sideband and dependencies on macOS using pip:
 pip3 install sbapp --user --break-system-packages
 
-# Run it:
+# Optionally install RNS command line utilities:
+pip3 install rns
+
+# Run Sideband from the terminal:
 python3 -m sbapp.main
+
+# Enable debug logging:
+python3 -m sbapp.main -v
+
+# Start Sideband in daemon mode:
+python3 -m sbapp.main -d
 
 # If you add your pip install location to
 # the PATH environment variable, you can
@@ -185,13 +218,32 @@ sideband
 
 ## On Windows
 
-Even though there is currently not an automated installer, or packaged `.exe` file for Sideband on Windows, you can still install it through `pip`. If you don't already have Python installed, [download and install](https://www.python.org/downloads/) the latest version of Python.
+To install Sideband on Windows, you have two options available:
 
-Please note that audio messaging functionality isn't supported on Windows yet. Please support the development if you'd like to see this feature added faster.
+1. An easy to install pre-built executable package
+2. A source package install for more advanced setups
 
-**Important!** When asked by the installer, make sure to add the Python program to your PATH environment variables. If you don't do this, you will not be able to use the `pip` installer, or run the `sideband` command.
+#### Prebuilt Executable
 
-When Python has been installed, you can open a command prompt and install sideband via `pip`:
+Simply download the packaged Windows ZIP file from the [latest release page](https://github.com/markqvist/Sideband/releases/latest), unzip the file, and run `Sideband.exe` from the unzipped directory. You can create desktop or start menu shortcuts from this executable if needed.
+
+When running Sideband for the first time, a default Reticulum configuration file will be created, if you don't already have one. If you don't have any existing Reticulum connectivity available locally, you may want to edit the file, located at `C:\Users\USERNAME\.reticulum\config` and manually add an interface that provides connectivity to a wider network. If you just want to connect over the Internet, you can add one of the public hubs on the [Reticulum Testnet](https://reticulum.network/connect.html).
+
+Though the ZIP file contains everything necessary to run Sideband, it is also recommended to install the Reticulum command line utilities separately, so that you can use commands like `rnstatus` and `rnsd` from the command line. This will make it easier to manage Reticulum connectivity on your system. If you do not already have Python installed on your system, [download and install it](https://www.python.org/downloads/) first.
+
+**Important!** When asked by the installer, make sure to add the Python program to your `PATH` environment variables. If you don't do this, you will not be able to use the `pip` installer, or run any of the installed commands. When Python has been installed, you can open a command prompt and install the Reticulum package via `pip`:
+
+```bash
+pip install rns
+```
+
+#### Source Package Install
+
+For more advanced setups, including the ability to run Sideband in headless daemon mode, enable debug logging output, configuration import and export and more, you may want to install it from the source package via `pip` instead.
+
+In this case, you will need to [download and install the latest supported version of Python](https://www.python.org/downloads/release/python-3127/) (currently Python 3.12.7), since very latest Python release, Python 3.13 is currently **not** compatible with the Kivy framework, that Sideband uses to render its user interface. The binary package already includes a compatible Python version, so if you are running Sideband from that, there is no need to install a specific version of Python.
+
+When Python has been installed, you can open a command prompt and install Sideband via `pip`:
 
 ```bash
 pip install sbapp
@@ -199,7 +251,7 @@ pip install sbapp
 
 The Sideband application can now be launched by running the command `sideband` in the command prompt. If needed, you can create a shortcut for Sideband on your desktop or in the start menu.
 
-When running Sideband for the first time, a default Reticulum configuration file will be created, if you don't already have one. If you don't have any existing Reticulum connectivity available locally, you may want to edit the file, located at `C:\Users\USERNAME\.reticulum\config` and manually add an interface that provides connectivity to a wider network. If you just want to connect over the Internet, you can add one of the public hubs on the [Reticulum Testnet](https://reticulum.network/connect.html).
+Since this installation method automatically installs the `rns` and `lxmf` packages as well, you will also have access to using all the included RNS and LXMF utilities like `rnstatus`, `rnsd` and `lxmd` on your system.
 
 # Paper Messaging Example
 
@@ -236,7 +288,7 @@ You can help support the continued development of open, free and private communi
 
 <br/>
 
-# Development Roadmap
+# Planned Features
 
 - <s>Secure and private location and telemetry sharing</s>
 - <s>Including images in messages</s>
@@ -246,15 +298,15 @@ You can help support the continued development of open, free and private communi
 - <s>Using Sideband as a Reticulum Transport Instance</s>
 - <s>Encryption keys export and import</s>
 - <s>Plugin support for commands, services and telemetry</s>
-- <s>Adding Linux .desktop file integration</s>
 - <s>Sending voice messages (using Codec2 and Opus)</s>
-- Implementing the Local Broadcasts feature
+- <s>Adding a Linux desktop integration</s>
+- <s>Adding prebuilt Windows binaries to the releases</s>
+- <s>Adding prebuilt macOS binaries to the releases</s>
+- Adding a Nomad Net page browser
 - LXMF sneakernet functionality
 - Network visualisation and test tools
-- A debug log viewer
 - Better message sorting mechanism
-- Fix I2P status not being displayed correctly when the I2P router disappears unexpectedly
-- Adding a Nomad Net page browser
+- A debug log viewer
 
 # License
 Unless otherwise noted, this work is licensed under a [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License][cc-by-nc-sa].

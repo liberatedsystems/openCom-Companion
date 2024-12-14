@@ -1,6 +1,6 @@
 __debug_build__ = False
 __disable_shaders__ = False
-__version__ = "1.1.3"
+__version__ = "1.2.0"
 __variant__ = ""
 
 import sys
@@ -23,6 +23,51 @@ import pathlib
 import base64
 import threading
 import RNS.vendor.umsgpack as msgpack
+
+app_ui_scaling_path = None
+def apply_ui_scale():
+    global app_ui_scaling_path
+    default_scale = os.environ["KIVY_METRICS_DENSITY"] if "KIVY_METRICS_DENSITY" in os.environ else "unknown"
+    config_path = None
+    ui_scale_path = None
+    
+    try:
+        if RNS.vendor.platformutils.is_android():
+            import plyer
+            ui_scale_path = plyer.storagepath.get_application_dir()+"/io.unsigned.sideband/files/app_storage/ui_scale"
+        else:
+            if config_path == None:
+                import sbapp.plyer as plyer
+                ui_scale_path = plyer.storagepath.get_home_dir()+"/.config/sideband/app_storage/ui_scale"
+                if ui_scale_path.startswith("file://"):
+                    ui_scale_path = ui_scale_path.replace("file://", "")
+            else:
+                ui_scale_path = config_path+"/app_storage/ui_scale"
+
+        app_ui_scaling_path = ui_scale_path
+    
+    except Exception as e:
+        RNS.log(f"Error while locating UI scale file: {e}", RNS.LOG_ERROR)
+
+    if ui_scale_path != None:
+        RNS.log("Default scaling factor on this platform is "+str(default_scale), RNS.LOG_NOTICE)
+        try:
+            RNS.log("Looking for scaling info in "+str(ui_scale_path))
+            if os.path.isfile(ui_scale_path):
+                scale_factor = None
+                with open(ui_scale_path, "r") as sf:
+                    scale_factor = float(sf.readline())
+
+                if scale_factor != None:
+                    if scale_factor >= 0.3 and scale_factor <= 5.0:
+                        os.environ["KIVY_METRICS_DENSITY"] = str(scale_factor)
+                        RNS.log("UI scaling factor set to "+str(os.environ["KIVY_METRICS_DENSITY"]), RNS.LOG_NOTICE)
+                    elif scale_factor == 0.0:
+                        RNS.log("Using default UI scaling factor", RNS.LOG_NOTICE)
+
+
+        except Exception as e:
+            RNS.log(f"Error while reading UI scaling factor: {e}", RNS.LOG_ERROR)
 
 if args.export_settings:
     from .sideband.core import SidebandCore
@@ -143,9 +188,11 @@ if args.daemon:
     NewConv = DaemonElement; Telemetry = DaemonElement; ObjectDetails = DaemonElement; Announces = DaemonElement;
     Messages = DaemonElement; ts_format = DaemonElement; messages_screen_kv = DaemonElement; plyer = DaemonElement; multilingual_markup = DaemonElement;
     ContentNavigationDrawer = DaemonElement; DrawerList = DaemonElement; IconListItem = DaemonElement; escape_markup = DaemonElement;
-    SoundLoader = DaemonElement;
+    SoundLoader = DaemonElement; BoxLayout = DaemonElement;
 
 else:
+    apply_ui_scale()
+
     from kivymd.app import MDApp
     app_superclass = MDApp
     from kivy.core.window import Window
@@ -157,6 +204,7 @@ else:
     from kivy.effects.scroll import ScrollEffect
     from kivy.uix.screenmanager import ScreenManager
     from kivy.uix.screenmanager import FadeTransition, NoTransition, SlideTransition
+    from kivy.uix.boxlayout import BoxLayout
     from kivymd.uix.list import OneLineIconListItem, IconLeftWidget
     from kivy.properties import StringProperty
     from kivymd.uix.button import BaseButton, MDIconButton
@@ -181,6 +229,7 @@ else:
         from ui.layouts import *
         from ui.conversations import Conversations, MsgSync, NewConv
         from ui.telemetry import Telemetry
+        from ui.utilities import Utilities
         from ui.objectdetails import ObjectDetails
         from ui.announces import Announces
         from ui.messages import Messages, ts_format, messages_screen_kv
@@ -208,6 +257,7 @@ else:
         from .ui.conversations import Conversations, MsgSync, NewConv
         from .ui.announces import Announces
         from .ui.telemetry import Telemetry
+        from .ui.utilities import Utilities
         from .ui.objectdetails import ObjectDetails
         from .ui.messages import Messages, ts_format, messages_screen_kv
         from .ui.helpers import ContentNavigationDrawer, DrawerList, IconListItem
@@ -294,6 +344,7 @@ class SidebandApp(MDApp):
         self.sync_dialog = None
         self.settings_ready = False
         self.telemetry_ready = False
+        self.utilities_ready = False
         self.connectivity_ready = False
         self.hardware_ready = False
         self.repository_ready = False
@@ -306,9 +357,11 @@ class SidebandApp(MDApp):
         self.service_last_available = 0
         self.closing_app = False
 
+        self.file_manager = None
         self.attach_path = None
         self.attach_type = None
         self.attach_dialog = None
+        self.shared_attach_dialog = None
         self.rec_dialog = None
         self.last_msg_audio = None
         self.msg_sound = None
@@ -699,6 +752,13 @@ class SidebandApp(MDApp):
             else:
                 RNS.log("Conversations view did not exist", RNS.LOG_DEBUG)
 
+            def ui_update_job():
+                time.sleep(0.05)
+                def cb(dt):
+                    self.perform_wake_update()
+                Clock.schedule_once(cb, 0.1)
+            threading.Thread(target=ui_update_job, daemon=True).start()
+
             RNS.log("App resumed", RNS.LOG_DEBUG)
 
     def on_stop(self):
@@ -713,6 +773,21 @@ class SidebandApp(MDApp):
             return True
         else:
             return False
+
+    def perform_wake_update(self):
+        # This workaround mitigates a bug in Kivy on Android
+        # which causes the UI to turn black on app resume,
+        # probably due to an invalid GL draw context. By
+        # simply opening and immediately closing the nav
+        # drawer, we force the UI to do a frame redraw, which
+        # results in the UI actually being visible again.
+        if RNS.vendor.platformutils.is_android():
+            RNS.log("Performing app wake UI update", RNS.LOG_DEBUG)
+            self.root.ids.nav_drawer.set_state("open")
+            def cb(dt):
+                self.root.ids.nav_drawer.set_state("closed")
+            Clock.schedule_once(cb, 0)
+
 
     def check_bluetooth_permissions(self):
         if RNS.vendor.platformutils.get_platform() == "android":
@@ -870,12 +945,53 @@ class SidebandApp(MDApp):
             if data.lower().startswith(LXMF.LXMessage.URI_SCHEMA):
                 action = "lxm_uri"
 
+        if intent_action == "android.intent.action.SEND":
+            try:
+                Intent = autoclass("android.content.Intent")
+                extras = intent.getExtras()
+                target = extras.get(Intent.EXTRA_STREAM)
+                mime_types = extras.get(Intent.EXTRA_MIME_TYPES)
+                target_uri = target.toString()
+                target_path = target.getPath()
+                target_filename = target.getLastPathSegment()
+
+                RNS.log(f"Received share intent: {target_uri} / {target_path} / {target_filename}", RNS.LOG_DEBUG)
+                for cf in os.listdir(self.sideband.share_cache):
+                    rt = os.path.join(self.sideband.share_cache, cf)
+                    os.unlink(rt)
+                    RNS.log("Removed previously cached data: "+str(rt), RNS.LOG_DEBUG)
+
+                ContentResolver = autoclass("android.content.ContentResolver")
+                cr = mActivity.getContentResolver()
+                cache_path = os.path.join(self.sideband.share_cache, target_filename)
+                input_stream = cr.openInputStream(target)
+                with open(cache_path, "wb") as cache_file:
+                    cache_file.write(bytes(input_stream.readAllBytes()))
+                    RNS.log("Cached shared data from Android intent", RNS.LOG_DEBUG)
+
+                action = "shared_data"
+                data = {"filename": target_filename, "data_path": cache_path}
+
+            except Exception as e:
+                RNS.log(f"Error while getting intent action data: {e}", RNS.LOG_ERROR)
+                RNS.trace_exception(e)
+
         if action != None:
             self.handle_action(action, data)
 
     def handle_action(self, action, data):
         if action == "lxm_uri":
             self.ingest_lxm_uri(data)
+
+        if action == "shared_data":
+            RNS.log("Got shared data: "+str(data))
+            def cb(dt):
+                try:
+                    self.shared_attachment_action(data)
+                except Exception as e:
+                    RNS.log("Error while handling external message attachment", RNS.LOG_ERROR)
+                    RNS.trace_exception(e)
+            Clock.schedule_once(cb, 0.1)
 
     def ingest_lxm_uri(self, lxm_uri):
         RNS.log("Ingesting LXMF paper message from URI: "+str(lxm_uri), RNS.LOG_DEBUG)
@@ -1064,6 +1180,9 @@ class SidebandApp(MDApp):
             self.quit_action(None)
         return True
 
+    def file_dropped(self, window, file_path, x, y, *args):
+        self.shared_attachment_action({"data_path": file_path.decode("utf-8")})
+
     def on_start(self):
         self.last_exit_event = time.time()
         self.root.ids.screen_manager.transition = self.slide_transition
@@ -1074,6 +1193,7 @@ class SidebandApp(MDApp):
         EventLoop.window.bind(on_key_down=self.keydown_event)
         EventLoop.window.bind(on_key_up=self.keyup_event)
         Window.bind(on_request_close=self.close_requested)
+        Window.bind(on_drop_file=self.file_dropped)
 
         if __variant__ != "":
             variant_str = " "+__variant__
@@ -1180,6 +1300,8 @@ class SidebandApp(MDApp):
                             self.close_sub_telemetry_action()
                         elif self.root.ids.screen_manager.current == "icons_screen":
                             self.close_sub_telemetry_action()
+                        elif self.root.ids.screen_manager.current == "utilities_screen":
+                            self.close_sub_utilities_action()
                         else:
                             self.open_conversations(direction="right")
                     
@@ -1219,8 +1341,11 @@ class SidebandApp(MDApp):
                         else:
                             self.telemetry_action(self)
 
-                    if text == "u":
+                    if text == "y":
                         self.map_display_own_telemetry()
+
+                    if text == "u":
+                        self.utilities_action()
 
                     if text == "o":
                         self.objects_action()
@@ -1233,6 +1358,8 @@ class SidebandApp(MDApp):
                                 self.lxmf_sync_action(self)
                         elif self.root.ids.screen_manager.current == "telemetry_screen":
                             self.conversations_action(self, direction="right")
+                        elif self.root.ids.screen_manager.current == "rnstatus_screen":
+                            self.utilities_screen.update_rnstatus()
                         elif self.root.ids.screen_manager.current == "object_details_screen":
                             if not self.object_details_screen.object_hash == self.sideband.lxmf_destination.hash:
                                 self.converse_from_telemetry(self)
@@ -1277,6 +1404,8 @@ class SidebandApp(MDApp):
                         self.close_sub_telemetry_action()
                     elif self.root.ids.screen_manager.current == "icons_screen":
                         self.close_sub_telemetry_action()
+                    elif self.root.ids.screen_manager.current == "rnstatus_screen":
+                        self.close_sub_utilities_action()
                     else:
                         self.open_conversations(direction="right")
 
@@ -1679,7 +1808,8 @@ class SidebandApp(MDApp):
 
     def message_fm_exited(self, *args):
         self.manager_open = False
-        self.file_manager.close()
+        if self.file_manager != None:
+            self.file_manager.close()
 
     def message_select_file_action(self, sender=None):
         perm_ok = False
@@ -1694,11 +1824,20 @@ class SidebandApp(MDApp):
 
         if perm_ok and path != None:
             try:
-                self.file_manager = MDFileManager(
-                    exit_manager=self.message_fm_exited,
-                    select_path=self.message_fm_got_path,
-                )
-                # self.file_manager.ext = ["*"]
+                if self.attach_type in ["lbimg", "defimg", "hqimg"]:
+                    self.file_manager = MDFileManager(
+                        exit_manager=self.message_fm_exited,
+                        select_path=self.message_fm_got_path,
+                        # Current KivyMD preview implementation is too slow to be reliable on Android
+                        preview=False)
+                else:
+                    self.file_manager = MDFileManager(
+                        exit_manager=self.message_fm_exited,
+                        select_path=self.message_fm_got_path,
+                        preview=False)
+
+                # self.file_manager.ext = []
+                # self.file_manager.search = "all"
                 self.file_manager.show(path)
 
             except Exception as e:
@@ -2175,6 +2314,65 @@ class SidebandApp(MDApp):
                 ate_dialog.open()
 
 
+    def shared_attachment_action(self, attachment_data):
+        if not self.root.ids.screen_manager.current == "messages_screen":
+            if RNS.vendor.platformutils.is_android():
+                toast("Please select a conversation first")
+            else:
+                ok_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
+                ate_dialog = MDDialog(
+                    title="No active conversation",
+                    text="To drop files as attachments, please open a conversation first",
+                    buttons=[ ok_button ],
+                )
+                ok_button.bind(on_release=ate_dialog.dismiss)
+                ate_dialog.open()
+        else:
+            self.rec_dialog_is_open = False
+
+            def a_img_lb(sender):
+                self.attach_type="lbimg"
+                self.shared_attach_dialog.dismiss()
+                self.shared_attach_dialog.att_exc()
+            def a_img_def(sender):
+                self.attach_type="defimg"
+                self.shared_attach_dialog.dismiss()
+                self.shared_attach_dialog.att_exc()
+            def a_img_hq(sender):
+                self.attach_type="hqimg"
+                self.shared_attach_dialog.dismiss()
+                self.shared_attach_dialog.att_exc()
+            def a_file(sender):
+                self.attach_type="file"
+                self.shared_attach_dialog.dismiss()
+                self.shared_attach_dialog.att_exc()
+
+            if self.shared_attach_dialog == None:
+                ss = int(dp(18))
+                cancel_button = MDRectangleFlatButton(text="Cancel", font_size=dp(18))
+                ad_items = [
+                        DialogItem(IconLeftWidget(icon="message-image-outline", on_release=a_img_lb), text="[size="+str(ss)+"]Low-bandwidth Image[/size]", on_release=a_img_lb),
+                        DialogItem(IconLeftWidget(icon="file-image", on_release=a_img_def), text="[size="+str(ss)+"]Medium Image[/size]", on_release=a_img_def),
+                        DialogItem(IconLeftWidget(icon="image-outline", on_release=a_img_hq), text="[size="+str(ss)+"]High-res Image[/size]", on_release=a_img_hq),
+                        DialogItem(IconLeftWidget(icon="file-outline", on_release=a_file), text="[size="+str(ss)+"]File Attachment[/size]", on_release=a_file)]
+                
+                self.shared_attach_dialog = MDDialog(
+                    title="Add Attachment",
+                    type="simple",
+                    text="Select how you want to attach this data to the next message sent\n",
+                    items=ad_items,
+                    buttons=[ cancel_button ],
+                    width_offset=dp(32),
+                )
+
+                cancel_button.bind(on_release=self.shared_attach_dialog.dismiss)
+
+            def att_exc():
+                self.message_fm_got_path(attachment_data["data_path"])
+
+            self.shared_attach_dialog.att_exc = att_exc
+            self.shared_attach_dialog.open()
+
     def update_message_widgets(self):
         toolbar_items = self.messages_view.ids.messages_toolbar.ids.right_actions.children
         mode_item = toolbar_items[1]
@@ -2400,13 +2598,14 @@ class SidebandApp(MDApp):
             else:
                 sl = None
 
+            sync_title = "LXMF Sync"
             if not hasattr(self, "message_sync_dialog") or self.message_sync_dialog == None:
                 close_button = MDRectangleFlatButton(text="Close",font_size=dp(18))
                 stop_button = MDRectangleFlatButton(text="Stop",font_size=dp(18), theme_text_color="Custom", line_color=self.color_reject, text_color=self.color_reject)
 
                 dialog_content = MsgSync()
                 dialog = MDDialog(
-                    title="LXMF Sync via "+RNS.prettyhexrep(self.sideband.message_router.get_outbound_propagation_node()),
+                    title=sync_title,
                     type="custom",
                     content_cls=dialog_content,
                     buttons=[ stop_button, close_button ],
@@ -2443,7 +2642,8 @@ class SidebandApp(MDApp):
                 dsp = 0
 
             self.sideband.setstate("app.flags.lxmf_sync_dialog_open", True)
-            self.message_sync_dialog.title = f"LXMF Sync via "+RNS.prettyhexrep(self.sideband.message_router.get_outbound_propagation_node())
+            self.message_sync_dialog.title = sync_title
+            self.message_sync_dialog.d_content.ids.node_info.text = f"Via {RNS.prettyhexrep(self.sideband.message_router.get_outbound_propagation_node())}\n"
             self.message_sync_dialog.d_content.ids.sync_status.text = self.sideband.get_sync_status()
             self.message_sync_dialog.d_content.ids.sync_progress.value = dsp
             self.message_sync_dialog.d_content.ids.sync_progress.start()
@@ -2487,11 +2687,15 @@ class SidebandApp(MDApp):
                     RNS.log("Error while creating conversation: "+str(e), RNS.LOG_ERROR)
 
                 if new_result:
+                    dialog.d_content.ids["n_address_field"].helper_text = ""
+                    dialog.d_content.ids["n_address_field"].helper_text_mode = "on_focus"
                     dialog.d_content.ids["n_address_field"].error = False
                     dialog.dismiss()
                     if self.conversations_view != None:
                         self.conversations_view.update()
                 else:
+                    dialog.d_content.ids["n_address_field"].helper_text = "Invalid address, check your input"
+                    dialog.d_content.ids["n_address_field"].helper_text_mode = "persistent"
                     dialog.d_content.ids["n_address_field"].error = True
                     # dialog.d_content.ids["n_error_field"].text = "Could not create conversation. Check your input."
 
@@ -2584,6 +2788,72 @@ class SidebandApp(MDApp):
 
         if no_transition:
             self.root.ids.screen_manager.transition = self.slide_transition
+
+    def configure_ui_scaling_action(self, sender=None):
+        global app_ui_scaling_path
+        try:
+            cancel_button = MDRectangleFlatButton(text="Cancel",font_size=dp(18))
+            set_button = MDRectangleFlatButton(text="Set",font_size=dp(18), theme_text_color="Custom", line_color=self.color_accept, text_color=self.color_accept)
+            
+            dialog_content = UIScaling()
+            dialog = MDDialog(
+                title="UI Scaling",
+                type="custom",
+                content_cls=dialog_content,
+                buttons=[ set_button, cancel_button ],
+                # elevation=0,
+            )
+            dialog.d_content = dialog_content
+            dialog.d_content.ids["scaling_factor"].text = os.environ["KIVY_METRICS_DENSITY"] if "KIVY_METRICS_DENSITY" in os.environ else "0.0"
+            def dl_yes(s):
+                new_sf = 1.0
+                scaling_ok = False
+                try:
+                    si = dialog.d_content.ids["scaling_factor"].text
+                    sf = float(si)
+                    if (sf >= 0.3 and sf <= 5.0) or sf == 0.0:
+                        new_sf = sf
+                        scaling_ok = True
+
+                except Exception as e:
+                    RNS.log("Error while getting scaling factor from user: "+str(e), RNS.LOG_ERROR)
+
+                if scaling_ok:
+                    dialog.d_content.ids["scaling_factor"].helper_text = ""
+                    dialog.d_content.ids["scaling_factor"].helper_text_mode = "on_focus"
+                    dialog.d_content.ids["scaling_factor"].error = False
+                    dialog.dismiss()
+                    if app_ui_scaling_path == None:
+                        RNS.log("No path to UI scaling factor file could be found, cannot save scaling factor", RNS.LOG_ERROR)
+                    else:
+                        try:
+                            with open(app_ui_scaling_path, "w") as sfile:
+                                sfile.write(str(new_sf))
+                            RNS.log(f"Saved configured scaling factor {new_sf} to {app_ui_scaling_path}", RNS.LOG_DEBUG)
+                        except Exception as e:
+                            RNS.log(f"Error while saving scaling factor {new_sf} to {app_ui_scaling_path}: {e}", RNS.LOG_ERROR)
+
+                else:
+                    dialog.d_content.ids["scaling_factor"].helper_text = "Invalid scale factor, check your input"
+                    dialog.d_content.ids["scaling_factor"].helper_text_mode = "persistent"
+                    dialog.d_content.ids["scaling_factor"].error = True
+
+            def dl_no(s):
+                dialog.dismiss()
+
+            def dl_ds(s):
+                self.dialog_open = False
+
+            set_button.bind(on_release=dl_yes)
+            cancel_button.bind(on_release=dl_no)
+
+            dialog.bind(on_dismiss=dl_ds)
+            dialog.open()
+            self.dialog_open = True
+
+        except Exception as e:
+            RNS.log("Error while creating UI scaling dialog: "+str(e), RNS.LOG_ERROR)
+
 
     def settings_action(self, sender=None, direction="left"):
         if self.settings_ready:
@@ -5280,6 +5550,44 @@ class SidebandApp(MDApp):
                 ate_dialog.open()
 
 
+    ### Utilities Screen
+    ######################################
+
+    def utilities_init(self):
+        if not self.utilities_ready:
+            self.utilities_screen = Utilities(self)
+            self.utilities_ready = True
+    
+    def utilities_open(self, sender=None, direction="left", no_transition=False):
+        if no_transition:
+            self.root.ids.screen_manager.transition = self.no_transition
+        else:
+            self.root.ids.screen_manager.transition = self.slide_transition
+            self.root.ids.screen_manager.transition.direction = direction
+
+        self.root.ids.screen_manager.current = "utilities_screen"
+        self.root.ids.nav_drawer.set_state("closed")
+        self.sideband.setstate("app.displaying", self.root.ids.screen_manager.current)
+
+        if no_transition:
+            self.root.ids.screen_manager.transition = self.slide_transition
+
+    def utilities_action(self, sender=None, direction="left"):
+        if self.utilities_ready:
+            self.utilities_open(direction=direction)
+        else:
+            self.loader_action(direction=direction)
+            def final(dt):
+                self.utilities_init()
+                def o(dt):
+                    self.utilities_open(no_transition=True)
+                Clock.schedule_once(o, ll_ot)
+            Clock.schedule_once(final, ll_ft)
+
+    def close_sub_utilities_action(self, sender=None):
+        self.utilities_action(direction="right")
+
+
     ### Telemetry Screen
     ######################################
 
@@ -6275,6 +6583,9 @@ class DialogItem(OneLineIconListItem):
 class MDMapIconButton(MDIconButton):
     pass
 
+class UIScaling(BoxLayout):
+    pass
+
 if not args.daemon:
     from kivy.base import ExceptionManager, ExceptionHandler
     class SidebandExceptionHandler(ExceptionHandler):
@@ -6309,4 +6620,7 @@ def run():
         SidebandApp().run()
 
 if __name__ == "__main__":
+    run()
+
+if __name__ == "sbapp.main":
     run()

@@ -20,7 +20,7 @@ RUN git clone https://github.com/jacobeva/Reticulum \
 
 # Switch branches
 WORKDIR "Reticulum"
-RUN git switch ble-dev
+#RUN git switch ble-dev
 
 WORKDIR ".."
 

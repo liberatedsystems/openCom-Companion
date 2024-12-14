@@ -31,6 +31,9 @@ preparewheel:
 build_wheel:
 	. sbapp/venv/bin/activate; python3 setup.py sdist bdist_wheel
 
+build_win_exe:
+	python -m PyInstaller sideband.spec --noconfirm
+
 release: build_wheel apk fetchapk
 
 release_docker:

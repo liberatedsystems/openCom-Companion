@@ -524,8 +524,8 @@ Builder.load_string("""
         id: n_address_field
         max_text_length: 32
         hint_text: "Address"
-        helper_text: "Error, check your input"
-        helper_text_mode: "on_error"
+        helper_text: ""
+        helper_text_mode: "on_focus"
         text: ""
         font_size: dp(24)
 
@@ -652,6 +652,10 @@ Builder.load_string("""
     padding: [0, 0, 0, dp(16)]
     height: self.minimum_height+dp(24)
 
+    MDLabel:
+        id: node_info
+        text: "Unknown propagation node"
+
     MDProgressBar:
         id: sync_progress
         type: "determinate"
@@ -659,7 +663,6 @@ Builder.load_string("""
 
     MDLabel:
         id: sync_status
-        hint_text: "Name"
         text: "Initiating sync..."
 
 

@@ -10,6 +10,7 @@ import shlex
 
 import RNS.vendor.umsgpack as msgpack
 import RNS.Interfaces.Interface as Interface
+from LXMF import pn_announce_data_is_valid
 
 import multiprocessing.connection
 
@@ -46,35 +47,42 @@ class PropagationNodeDetector():
     def received_announce(self, destination_hash, announced_identity, app_data):
         try:
             if app_data != None and len(app_data) > 0:
-                unpacked = msgpack.unpackb(app_data)
-                node_active = unpacked[0]
-                emitted = unpacked[1]
-                hops = RNS.Transport.hops_to(destination_hash)
+                if pn_announce_data_is_valid(app_data):
+                    unpacked = msgpack.unpackb(app_data)
+                    node_active = unpacked[0]
+                    emitted = unpacked[1]
+                    hops = RNS.Transport.hops_to(destination_hash)
 
-                age = time.time() - emitted
-                if age < 0:
-                    RNS.log("Warning, propagation node announce emitted in the future, possible timing inconsistency or tampering attempt.")
-                    if age < -1*PropagationNodeDetector.EMITTED_DELTA_GRACE:
-                        raise ValueError("Announce timestamp too far in the future, discarding it")
+                    age = time.time() - emitted
+                    if age < 0:
+                        RNS.log("Warning, propagation node announce emitted in the future, possible timing inconsistency or tampering attempt.")
+                        if age < -1*PropagationNodeDetector.EMITTED_DELTA_GRACE:
+                            raise ValueError("Announce timestamp too far in the future, discarding it")
 
-                if age > -1*PropagationNodeDetector.EMITTED_DELTA_IGNORE:
-                    # age = 0
-                    pass
+                    if age > -1*PropagationNodeDetector.EMITTED_DELTA_IGNORE:
+                        # age = 0
+                        pass
 
-                RNS.log("Detected active propagation node "+RNS.prettyhexrep(destination_hash)+" emission "+str(age)+" seconds ago, "+str(hops)+" hops away")
-                self.owner.log_announce(destination_hash, RNS.prettyhexrep(destination_hash).encode("utf-8"), dest_type=PropagationNodeDetector.aspect_filter)
+                    RNS.log("Detected active propagation node "+RNS.prettyhexrep(destination_hash)+" emission "+str(age)+" seconds ago, "+str(hops)+" hops away")
+                    self.owner.log_announce(destination_hash, app_data, dest_type=PropagationNodeDetector.aspect_filter)
 
-                if self.owner.config["lxmf_propagation_node"] == None:
-                    if self.owner.active_propagation_node == None:
-                        self.owner.set_active_propagation_node(destination_hash)
-                    else:
-                        prev_hops = RNS.Transport.hops_to(self.owner.active_propagation_node)
-                        if hops <= prev_hops:
+                    if self.owner.config["lxmf_propagation_node"] == None:
+                        if self.owner.active_propagation_node == None:
                             self.owner.set_active_propagation_node(destination_hash)
                         else:
-                            pass
+                            prev_hops = RNS.Transport.hops_to(self.owner.active_propagation_node)
+                            if hops <= prev_hops:
+                                self.owner.set_active_propagation_node(destination_hash)
+                            else:
+                                pass
+                    else:
+                        pass
+
                 else:
-                    pass
+                    RNS.log(f"Received malformed propagation node announce from {RNS.prettyhexrep(destination_hash)} with data: {app_data}", RNS.LOG_DEBUG)
+
+            else:
+                RNS.log(f"Received malformed propagation node announce from {RNS.prettyhexrep(destination_hash)} with data: {app_data}", RNS.LOG_DEBUG)
 
         except Exception as e:
             RNS.log("Error while processing received propagation node announce: "+str(e))
@@ -170,19 +178,21 @@ class SidebandCore():
         self.cache_dir       = self.app_dir+"/cache"
         
         self.rns_configdir = None
+
+        core_path          = os.path.abspath(__file__)
+        if "core.pyc" in core_path:
+            core_path      = core_path.replace("core.pyc", "core.py")
+
         if RNS.vendor.platformutils.is_android():
             self.app_dir = android_app_dir+"/uk.co.liberatedsystems.occ/files/"
             self.cache_dir = self.app_dir+"/cache"
             self.rns_configdir = self.app_dir+"/app_storage/reticulum"
             self.asset_dir     = self.app_dir+"/app/assets"
         elif RNS.vendor.platformutils.is_darwin():
-            core_path          = os.path.abspath(__file__)
             self.asset_dir     = core_path.replace("/occ/core.py", "/assets")
         elif RNS.vendor.platformutils.get_platform() == "linux":
-            core_path          = os.path.abspath(__file__)
             self.asset_dir     = core_path.replace("/occ/core.py", "/assets")
         elif RNS.vendor.platformutils.is_windows():
-            core_path          = os.path.abspath(__file__)
             self.asset_dir     = core_path.replace("\\occ\\core.py", "\\assets")
         else:
             self.asset_dir     = plyer.storagepath.get_application_dir()+"/sbapp/assets"
@@ -194,6 +204,10 @@ class SidebandCore():
         self.rec_cache         = self.cache_dir+"/rec"
         if not os.path.isdir(self.rec_cache):
             os.makedirs(self.rec_cache)
+
+        self.share_cache       = self.cache_dir+"/share"
+        if not os.path.isdir(self.share_cache):
+            os.makedirs(self.share_cache)
 
         self.icon              = self.asset_dir+"/icon.png"
         self.icon_48           = self.asset_dir+"/icon_48.png"
@@ -977,7 +991,8 @@ class SidebandCore():
         try:
             if app_data == None:
                 app_data = b""
-            app_data = msgpack.packb([app_data, stamp_cost])
+            if type(app_data) != bytes:
+                app_data = msgpack.packb([app_data, stamp_cost])
             RNS.log("Received "+str(dest_type)+" announce for "+RNS.prettyhexrep(dest)+" with data: "+str(app_data), RNS.LOG_DEBUG)
             self._db_save_announce(dest, app_data, dest_type)
             self.setstate("app.flags.new_announces", True)
@@ -2480,12 +2495,19 @@ class SidebandCore():
                     try:
                         if not entry[2] in added_dests:
                             app_data = entry[3]
+                            dest_type = entry[4]
+                            if dest_type == "lxmf.delivery":
+                                announced_name = LXMF.display_name_from_app_data(app_data)
+                                announced_cost = self.message_router.get_outbound_stamp_cost(entry[2])
+                            else:
+                                announced_name = None
+                                announced_cost = None
                             announce = {
                                 "dest": entry[2],
-                                "name": LXMF.display_name_from_app_data(app_data),
-                                "cost": LXMF.stamp_cost_from_app_data(app_data),
+                                "name": announced_name,
+                                "cost": announced_cost,
                                 "time": entry[1],
-                                "type": entry[4]
+                                "type": dest_type
                             }
                             added_dests.append(entry[2])
                             announces.append(announce)
@@ -3488,11 +3510,12 @@ class SidebandCore():
             else:
                 ifac_netkey = self.config["connect_local_ifac_passphrase"]
 
-            autointerface = RNS.Interfaces.AutoInterface.AutoInterface(
-                RNS.Transport,
-                name = "AutoInterface",
-                group_id = group_id
-            )
+            interface_config = {
+                "name": "AutoInterface",
+                "group_id": group_id
+            }
+
+            autointerface = RNS.Interfaces.AutoInterface.AutoInterface(RNS.Transport, interface_config)
             autointerface.OUT = True
 
             if RNS.Reticulum.transport_enabled():
@@ -3572,6 +3595,8 @@ class SidebandCore():
             else:
                 atl_long = self.config["hw_rnode_atl_long"]
 
+            interface_config = None
+
             if self.config["hw_rnode_secondary_modem"]:
                 if self.config["hw_rnode_sec_atl_short"] == "":
                     sec_atl_short = None
@@ -3611,38 +3636,46 @@ class SidebandCore():
                 subint_config[0][9] = sec_atl_long
                 subint_config[1][10] = True # outgoing
 
-                rnodeinterface = RNS.Interfaces.Android.RNodeMultiInterface.RNodeMultiInterface(
-                        RNS.Transport,
-                        "RNodeInterface",
-                        target_port,
-                        subint_config,
-                        allow_bluetooth = False,
-                        force_ble = rnode_allow_bluetooth,
-                        ble_name = bt_device_name,
-                        target_device_name = bt_device_name,
-                   )
+                interface_config = {
+                    "name": "RNodeMultiInterface",
+                    "port": target_port,
+                    "subint_config": subint_config,
+                    "flow_control": False,
+                    "id_interval": self.config["hw_rnode_beaconinterval"],
+                    "id_callsign": self.config["hw_rnode_beacondata"],
+                    "st_alock": atl_short,
+                    "lt_alock": atl_long,
+                    "allow_bluetooth": False,
+                    "target_device_name": None,
+                    "force_ble": True,
+                    "ble_name": bt_device_name,
+                    "ble_addr": None,
+                }
 
+                rnodeinterface = RNS.Interfaces.Android.RNodeMultiInterface.RNodeMultiInterface(RNS.Transport, interface_config)
                 rnodeinterface.start()
             else:
-                rnodeinterface = RNS.Interfaces.Android.RNodeInterface.RNodeInterface(
-                        RNS.Transport,
-                        "RNodeInterface",
-                        target_port,
-                        frequency = self.config["hw_rnode_frequency"],
-                        bandwidth = self.config["hw_rnode_bandwidth"],
-                        txpower = self.config["hw_rnode_tx_power"],
-                        sf = self.config["hw_rnode_spreading_factor"],
-                        cr = self.config["hw_rnode_coding_rate"],
-                        flow_control = None,
-                        id_interval = self.config["hw_rnode_beaconinterval"],
-                        id_callsign = self.config["hw_rnode_beacondata"],
-                        allow_bluetooth = False,
-                        force_ble = rnode_allow_bluetooth,
-                        ble_name = bt_device_name,
-                        st_alock = atl_short,
-                        lt_alock = atl_long,
-                    )
+                interface_config = {
+                    "name": "RNodeInterface",
+                    "port": target_port,
+                    "frequency": self.config["hw_rnode_frequency"],
+                    "bandwidth": self.config["hw_rnode_bandwidth"],
+                    "txpower": self.config["hw_rnode_tx_power"],
+                    "spreadingfactor": self.config["hw_rnode_spreading_factor"],
+                    "codingrate": self.config["hw_rnode_coding_rate"],
+                    "flow_control": False,
+                    "id_interval": self.config["hw_rnode_beaconinterval"],
+                    "id_callsign": self.config["hw_rnode_beacondata"],
+                    "st_alock": atl_short,
+                    "lt_alock": atl_long,
+                    "allow_bluetooth": False,
+                    "target_device_name": bt_device_name,
+                    "force_ble": True,
+                    "ble_name": None,
+                    "ble_addr": None,
+                }
 
+                rnodeinterface = RNS.Interfaces.Android.RNodeInterface.RNodeInterface(RNS.Transport, interface_config)
                 rnodeinterface.OUT = True
 
             if RNS.Reticulum.transport_enabled():
@@ -3677,6 +3710,7 @@ class SidebandCore():
 
         except Exception as e:
             RNS.log("Error while adding RNode Interface. The contained exception was: "+str(e))
+            RNS.trace_exception(e)
             self.interface_rnode = None
 
     def _reticulum_log_debug(self, debug=False):
@@ -3751,15 +3785,14 @@ class SidebandCore():
                                 else:
                                     ifac_size = None
 
-                                tcpinterface = RNS.Interfaces.TCPInterface.TCPClientInterface(
-                                    RNS.Transport,
-                                    "TCPClientInterface",
-                                    tcp_host,
-                                    tcp_port,
-                                    kiss_framing = False,
-                                    i2p_tunneled = False
-                                )
-
+                                interface_config = {
+                                    "name": "TCPClientInterface",
+                                    "target_host": tcp_host,
+                                    "target_port": tcp_port,
+                                    "kiss_framing": False,
+                                    "i2p_tunneled": False,
+                                }
+                                tcpinterface = RNS.Interfaces.TCPInterface.TCPClientInterface(RNS.Transport, interface_config)
                                 tcpinterface.OUT = True
 
                                 if RNS.Reticulum.transport_enabled():
@@ -3803,13 +3836,14 @@ class SidebandCore():
                             else:
                                 ifac_size = None
 
-                            i2pinterface = RNS.Interfaces.I2PInterface.I2PInterface(
-                                RNS.Transport,
-                                "I2PInterface",
-                                RNS.Reticulum.storagepath,
-                                [self.config["connect_i2p_b32"]],
-                                connectable = False,
-                            )
+                            interface_config = {
+                                "name": "I2PInterface",
+                                "storagepath": RNS.Reticulum.storagepath,
+                                "peers": [self.config["connect_i2p_b32"]],
+                                "connectable": False,
+                            }
+
+                            i2pinterface = RNS.Interfaces.I2PInterface.I2PInterface(RNS.Transport, interface_config)
 
                             i2pinterface.OUT = True
 
@@ -3862,16 +3896,15 @@ class SidebandCore():
                             else:
                                 ifac_netkey = self.config["connect_serial_ifac_passphrase"]
 
-                            serialinterface = RNS.Interfaces.Android.SerialInterface.SerialInterface(
-                                RNS.Transport,
-                                "SerialInterface",
-                                target_device["port"],
-                                self.config["hw_serial_baudrate"],
-                                self.config["hw_serial_databits"],
-                                self.config["hw_serial_parity"],
-                                self.config["hw_serial_stopbits"],
-                            )
-
+                            interface_config = {
+                                "name": "SerialInterface",
+                                "port": target_device["port"],
+                                "speed": self.config["hw_serial_baudrate"],
+                                "databits": self.config["hw_serial_databits"],
+                                "parity": self.config["hw_serial_parity"],
+                                "stopbits": self.config["hw_serial_stopbits"],
+                            }
+                            serialinterface = RNS.Interfaces.Android.SerialInterface.SerialInterface(RNS.Transport, interface_config)
                             serialinterface.OUT = True
 
                             if RNS.Reticulum.transport_enabled():
@@ -3915,23 +3948,22 @@ class SidebandCore():
                             else:
                                 ifac_netkey = self.config["connect_modem_ifac_passphrase"]
 
-                            modeminterface = RNS.Interfaces.Android.KISSInterface.KISSInterface(
-                                RNS.Transport,
-                                "ModemInterface",
-                                target_device["port"],
-                                self.config["hw_modem_baudrate"],
-                                self.config["hw_modem_databits"],
-                                self.config["hw_modem_parity"],
-                                self.config["hw_modem_stopbits"],
-                                self.config["hw_modem_preamble"],
-                                self.config["hw_modem_tail"],
-                                self.config["hw_modem_persistence"],
-                                self.config["hw_modem_slottime"],
-                                False, # flow control
-                                self.config["hw_modem_beaconinterval"],
-                                self.config["hw_modem_beacondata"],
-                            )
-
+                            interface_config = {
+                                "name": "ModemInterface",
+                                "port": target_device["port"],
+                                "speed": self.config["hw_modem_baudrate"],
+                                "databits": self.config["hw_modem_databits"],
+                                "parity": self.config["hw_modem_parity"],
+                                "stopbits": self.config["hw_modem_stopbits"],
+                                "preamble": self.config["hw_modem_preamble"],
+                                "txtail": self.config["hw_modem_tail"],
+                                "persistence": self.config["hw_modem_persistence"],
+                                "slottime": self.config["hw_modem_slottime"],
+                                "flow_control": False,
+                                "beacon_interval": self.config["hw_modem_beaconinterval"],
+                                "beacon_data": self.config["hw_modem_beacondata"],
+                            }
+                            modeminterface = RNS.Interfaces.Android.KISSInterface.KISSInterface(RNS.Transport, interface_config)
                             modeminterface.OUT = True
 
                             if RNS.Reticulum.transport_enabled():
@@ -4328,7 +4360,11 @@ class SidebandCore():
 
         try:
             addr_b = bytes.fromhex(dest_str)
-            self._db_create_conversation(addr_b, name, trusted)
+            if addr_b == self.lxmf_destination.hash:
+                RNS.log("Cannot create conversation with own LXMF address", RNS.LOG_ERROR)
+                return False
+            else:
+                self._db_create_conversation(addr_b, name, trusted)
 
         except Exception as e:
             RNS.log("Error while creating conversation: "+str(e), RNS.LOG_ERROR)
@@ -4437,7 +4473,11 @@ class SidebandCore():
 
             if not originator and LXMF.FIELD_AUDIO in message.fields and ptt_enabled:
                 self.ptt_event(message)
-                should_notify = False
+                if self.gui_conversation() != context_dest:
+                    if not RNS.vendor.platformutils.is_android():
+                        should_notify = True
+                else:
+                    should_notify = False
 
         if self.is_client:
             should_notify = False
