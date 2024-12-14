@@ -80,13 +80,13 @@ MDNavigationLayout:
                                 on_release: root.ids.screen_manager.app.map_action(self)
 
                                                        
-                        OneLineIconListItem:
-                            text: "Overview"
-                            on_release: root.ids.screen_manager.app.overview_action(self)
+                        # OneLineIconListItem:
+                        #     text: "Overview"
+                        #     on_release: root.ids.screen_manager.app.overview_action(self)
                         
-                            IconLeftWidget:
-                                icon: "view-dashboard-outline"
-                                on_release: root.ids.screen_manager.app.overview_action(self)
+                        #     IconLeftWidget:
+                        #         icon: "view-dashboard-outline"
+                        #         on_release: root.ids.screen_manager.app.overview_action(self)
 
                                                        
                         OneLineIconListItem:
@@ -1287,7 +1287,7 @@ layout_settings_screen = """
     MDLabel:
         id: scaling_info
         markup: True
-        text: "You can scale the entire Sideband UI by specifying a scaling factor in the field below. After setting it, restart sideband for the scaling to take effect.\\n\\nSet to 0.0 to disable scaling adjustments."
+        text: "You can scale the entire Sideband UI by specifying a scaling factor in the field below. After setting it, restart sideband for the scaling to take effect.\\n\\nSet to 0.0 to disable scaling adjustments.\\n\\n[b]Please note![/b] On some devices, the default scaling factor will be higher than 1.0, and setting a smaller value will result in miniscule UI elements."
         size_hint_y: None
         text_size: self.width, None
         height: self.texture_size[1]
@@ -1501,6 +1501,21 @@ MDScreen:
                     height: dp(48)
                     
                     MDLabel:
+                        text: "Classic message colors"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: settings_classic_message_colors
+                        pos_hint: {"center_y": 0.3}
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
                         text: "Show user icons in conversation list"
                         font_style: "H6"
 
@@ -1568,7 +1583,7 @@ MDScreen:
                     height: dp(48)
                     
                     MDLabel:
-                        text: "Announce Automatically"
+                        text: "Announce automatically"
                         font_style: "H6"
 
                     MDSwitch:
@@ -1583,7 +1598,7 @@ MDScreen:
                     height: dp(48)
                     
                     MDLabel:
-                        text: "Try propagation on direct delivery failure"
+                        text: "Try propagation automatically"
                         font_style: "H6"
 
                     MDSwitch:
@@ -1620,6 +1635,22 @@ MDScreen:
 
                     MDSwitch:
                         id: settings_lxmf_ignore_unknown
+                        pos_hint: {"center_y": 0.3}
+                        disabled: False
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
+                        text: "Only render markup from trusted"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: settings_trusted_markup_only
                         pos_hint: {"center_y": 0.3}
                         disabled: False
                         active: False
@@ -1752,21 +1783,21 @@ MDScreen:
                         disabled: False
                         active: False
 
-                MDBoxLayout:
-                    orientation: "horizontal"
-                    size_hint_y: None
-                    padding: [0,0,dp(24),dp(0)]
-                    height: dp(48)
+                # MDBoxLayout:
+                #     orientation: "horizontal"
+                #     size_hint_y: None
+                #     padding: [0,0,dp(24),dp(0)]
+                #     height: dp(48)
                     
-                    MDLabel:
-                        text: "Use Home Node as Broadcast Repeater"
-                        font_style: "H6"
+                #     MDLabel:
+                #         text: "Use Home Node as Broadcast Repeater"
+                #         font_style: "H6"
 
-                    MDSwitch:
-                        id: settings_home_node_as_broadcast_repeater
-                        pos_hint: {"center_y": 0.3}
-                        active: False
-                        disabled: True
+                #     MDSwitch:
+                #         id: settings_home_node_as_broadcast_repeater
+                #         pos_hint: {"center_y": 0.3}
+                #         active: False
+                #         disabled: True
 
                 MDBoxLayout:
                     orientation: "horizontal"

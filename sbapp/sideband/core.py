@@ -16,6 +16,7 @@ import multiprocessing.connection
 
 from copy import deepcopy
 from threading import Lock
+from collections import deque
 from .res import sideband_fb_data
 from .sense import Telemeter, Commands
 from .plugins import SidebandCommandPlugin, SidebandServicePlugin, SidebandTelemetryPlugin
@@ -44,7 +45,7 @@ class PropagationNodeDetector():
 
     aspect_filter = "lxmf.propagation"
 
-    def received_announce(self, destination_hash, announced_identity, app_data):
+    def received_announce(self, destination_hash, announced_identity, app_data, announce_packet_hash):
         try:
             if app_data != None and len(app_data) > 0:
                 if pn_announce_data_is_valid(app_data):
@@ -63,8 +64,12 @@ class PropagationNodeDetector():
                         # age = 0
                         pass
 
+                    link_stats = {"rssi": self.owner_app.sideband.reticulum.get_packet_rssi(announce_packet_hash),
+                                 "snr": self.owner_app.sideband.reticulum.get_packet_snr(announce_packet_hash),
+                                 "q": self.owner_app.sideband.reticulum.get_packet_q(announce_packet_hash)}
+
                     RNS.log("Detected active propagation node "+RNS.prettyhexrep(destination_hash)+" emission "+str(age)+" seconds ago, "+str(hops)+" hops away")
-                    self.owner.log_announce(destination_hash, app_data, dest_type=PropagationNodeDetector.aspect_filter)
+                    self.owner.log_announce(destination_hash, app_data, dest_type=PropagationNodeDetector.aspect_filter, link_stats=link_stats)
 
                     if self.owner.config["lxmf_propagation_node"] == None:
                         if self.owner.active_propagation_node == None:
@@ -110,10 +115,16 @@ class SidebandCore():
 
     DEFAULT_APPEARANCE = ["account", [0,0,0,1], [1,1,1,1]]
 
+    LOG_DEQUE_MAXLEN = 128
+
     aspect_filter = "lxmf.delivery"
-    def received_announce(self, destination_hash, announced_identity, app_data):
+    def received_announce(self, destination_hash, announced_identity, app_data, announce_packet_hash):
         # Add the announce to the directory announce
         # stream logger
+
+        link_stats = {"rssi": self.reticulum.get_packet_rssi(announce_packet_hash),
+                     "snr": self.reticulum.get_packet_snr(announce_packet_hash),
+                     "q": self.reticulum.get_packet_q(announce_packet_hash)}
 
         # This reformats the new v0.5.0 announce data back to the expected format
         # for Sidebands database and other handling functions.
@@ -123,7 +134,7 @@ class SidebandCore():
         if dn != None:
             app_data = dn.encode("utf-8")
 
-        self.log_announce(destination_hash, app_data, dest_type=SidebandCore.aspect_filter, stamp_cost=sc)
+        self.log_announce(destination_hash, app_data, dest_type=SidebandCore.aspect_filter, stamp_cost=sc, link_stats=link_stats)
 
     def __init__(self, owner_app, config_path = None, is_service=False, is_client=False, android_app_dir=None, verbose=False, owner_service=None, service_context=None, is_daemon=False, load_config_only=False):
         self.is_service = is_service
@@ -142,6 +153,7 @@ class SidebandCore():
             self.is_standalone = False
 
         self.log_verbose = verbose
+        self.log_deque = deque(maxlen=self.LOG_DEQUE_MAXLEN)
         self.owner_app = owner_app
         self.reticulum = None
         self.webshare_server = None
@@ -156,6 +168,7 @@ class SidebandCore():
         self.telemetry_send_blocked_until = 0
         self.pending_telemetry_request = False
         self.telemetry_request_max_history = 7*24*60*60
+        self.live_tracked_objects = {}
         self.default_lxm_limit = 128*1000
         self.state_db = {}
         self.state_lock = Lock()
@@ -167,6 +180,7 @@ class SidebandCore():
         self.owner_service = owner_service
         self.allow_service_dispatch = True
         self.version_str = ""
+        self.config_template = rns_config
 
         if config_path == None:
             self.app_dir     = plyer.storagepath.get_home_dir()+"/.config/occ"
@@ -228,7 +242,14 @@ class SidebandCore():
         self.log_dir       = self.app_dir+"/app_storage/"
         self.tmp_dir       = self.app_dir+"/app_storage/tmp"
         self.exports_dir   = self.app_dir+"/exports"
-        self.webshare_dir  = "./share/"
+        if RNS.vendor.platformutils.is_android():
+            self.webshare_dir  = "./share/"
+        else:
+            sideband_dir = os.path.dirname(os.path.abspath(__file__))
+            self.webshare_dir  = os.path.abspath(os.path.join(sideband_dir, "..", "share"))
+
+        self.webshare_ssl_key_path  = self.app_dir+"/app_storage/ssl_key.pem"
+        self.webshare_ssl_cert_path = self.app_dir+"/app_storage/ssl_cert.pem"
         
         self.first_run     = True
         self.saving_configuration = False
@@ -267,6 +288,29 @@ class SidebandCore():
         if load_config_only:
             return
 
+        if RNS.vendor.platformutils.is_android():
+            if self.config["config_template"] != None:
+                try:
+                    if not os.path.isfile(self.rns_configdir+"/config_template_invalid"):
+                        if self.is_service:
+                            with open(self.rns_configdir+"/config_template_invalid", "w") as invalidation_file:
+                                invalidation_file.write("\n")
+
+                        ct = self.config["config_template"]
+                        RNS.log(f"Loading modified RNS config template", RNS.LOG_WARNING)
+                        self.config_template = ct
+
+                    else:
+                        RNS.log("Custom configuration template invalid, using default configuration template", RNS.LOG_WARNING)
+                        self.config_template = rns_config
+                        if self.is_service:
+                            self.setstate("hardware_operation.error", "At the previous start, Sideband could not initialise Reticulum. Custom configuration template loading has been temporarily disabled. Please check and fix any errors in your configuration template.")
+
+                except Exception as e:
+                    RNS.log(f"An error occurred while setting RNS configuration template: {e}", RNS.LOG_ERROR)
+                    RNS.log(f"Using default configuration template", RNS.LOG_ERROR)
+                    self.config_template = rns_config
+
         # Initialise Reticulum configuration
         if RNS.vendor.platformutils.get_platform() == "android":
             try:
@@ -277,11 +321,10 @@ class SidebandCore():
                 RNS.log("Configuring Reticulum instance...")
                 if self.config["connect_transport"]:
                     RNS.log("Enabling Reticulum Transport")
-                    generated_config = rns_config.replace("TRANSPORT_IS_ENABLED", "Yes")
+                    generated_config = self.config_template.replace("TRANSPORT_IS_ENABLED", "Yes")
                 else:
                     RNS.log("Not enabling Reticulum Transport")
-                    generated_config = rns_config.replace("TRANSPORT_IS_ENABLED", "No")
-
+                    generated_config = self.config_template.replace("TRANSPORT_IS_ENABLED", "No")
 
                 config_file = open(self.rns_configdir+"/config", "wb")
                 config_file.write(generated_config.encode("utf-8"))
@@ -387,7 +430,7 @@ class SidebandCore():
         self.config["debug"] = False
         self.config["display_name"] = "Anonymous Peer"
         self.config["notifications_on"] = True
-        self.config["dark_ui"] = False
+        self.config["dark_ui"] = True
         self.config["start_announce"] = True
         self.config["propagation_by_default"] = False
         self.config["home_node_as_broadcast_repeater"] = False
@@ -403,8 +446,9 @@ class SidebandCore():
         self.config["last_lxmf_propagation_node"] = None
         self.config["nn_home_node"] = None
         self.config["print_command"] = "lp"
-        self.config["eink_mode"] = False
+        self.config["eink_mode"] = True
         self.config["lxm_limit_1mb"] = True
+        self.config["trusted_markup_only"] = False
 
         # Connectivity
         self.config["connect_transport"] = False
@@ -569,7 +613,7 @@ class SidebandCore():
         if not "dark_ui" in self.config:
             self.config["dark_ui"] = True
         if not "advanced_stats" in self.config:
-            self.config["advanced_stats"] = False
+            self.config["advanced_stats"] = True
         if not "lxmf_periodic_sync" in self.config:
             self.config["lxmf_periodic_sync"] = False
         if not "lxmf_ignore_unknown" in self.config:
@@ -589,13 +633,17 @@ class SidebandCore():
         if not "print_command" in self.config:
             self.config["print_command"] = "lp"
         if not "eink_mode" in self.config:
-            self.config["eink_mode"] = False
+            self.config["eink_mode"] = True
+        if not "classic_message_colors" in self.config:
+            self.config["classic_message_colors"] = False
         if not "display_style_in_contact_list" in self.config:
-            self.config["display_style_in_contact_list"] = False
+            self.config["display_style_in_contact_list"] = True
         if not "lxm_limit_1mb" in self.config:
             self.config["lxm_limit_1mb"] = True
         if not "hq_ptt" in self.config:
             self.config["hq_ptt"] = False
+        if not "trusted_markup_only" in self.config:
+            self.config["trusted_markup_only"] = False
 
         if not "input_language" in self.config:
             self.config["input_language"] = None
@@ -604,6 +652,8 @@ class SidebandCore():
         if not "block_predictive_text" in self.config:
             self.config["block_predictive_text"] = False
 
+        if not "config_template" in self.config:
+            self.config["config_template"] = None
         if not "connect_transport" in self.config:
             self.config["connect_transport"] = False
         if not "connect_rnode" in self.config:
@@ -739,11 +789,11 @@ class SidebandCore():
         if not "telemetry_bg" in self.config:
             self.config["telemetry_bg"] = SidebandCore.DEFAULT_APPEARANCE[2]
         if not "telemetry_send_appearance" in self.config:
-            self.config["telemetry_send_appearance"] = False
+            self.config["telemetry_send_appearance"] = True
         if not "telemetry_display_trusted_only" in self.config:
             self.config["telemetry_display_trusted_only"] = False
         if not "display_style_from_all" in self.config:
-            self.config["display_style_from_all"] = False
+            self.config["display_style_from_all"] = True
         if not "telemetry_receive_trusted_only" in self.config:
             self.config["telemetry_receive_trusted_only"] = False
 
@@ -854,9 +904,8 @@ class SidebandCore():
                 time.sleep(0.15)
             try:
                 self.saving_configuration = True
-                config_file = open(self.config_path, "wb")
-                config_file.write(msgpack.packb(self.config))
-                config_file.close()
+                with open(self.config_path, "wb") as config_file:
+                    config_file.write(msgpack.packb(self.config))
                 self.saving_configuration = False
             except Exception as e:
                 self.saving_configuration = False
@@ -987,14 +1036,14 @@ class SidebandCore():
                     else:
                         plyer.notification.notify(title, content, app_icon=self.icon_32)
 
-    def log_announce(self, dest, app_data, dest_type, stamp_cost=None):
+    def log_announce(self, dest, app_data, dest_type, stamp_cost=None, link_stats=None):
         try:
             if app_data == None:
                 app_data = b""
             if type(app_data) != bytes:
                 app_data = msgpack.packb([app_data, stamp_cost])
             RNS.log("Received "+str(dest_type)+" announce for "+RNS.prettyhexrep(dest)+" with data: "+str(app_data), RNS.LOG_DEBUG)
-            self._db_save_announce(dest, app_data, dest_type)
+            self._db_save_announce(dest, app_data, dest_type, link_stats)
             self.setstate("app.flags.new_announces", True)
 
         except Exception as e:
@@ -1316,7 +1365,7 @@ class SidebandCore():
             else:
                 return False
 
-    def request_latest_telemetry(self, from_addr=None):
+    def request_latest_telemetry(self, from_addr=None, is_livetrack=False):
         if self.allow_service_dispatch and self.is_client:
             try:
                 return self._service_request_latest_telemetry(from_addr)
@@ -1350,7 +1399,11 @@ class SidebandCore():
                         if self.config["telemetry_use_propagation_only"] == True:
                             desired_method = LXMF.LXMessage.PROPAGATED
                         else:
-                            desired_method = LXMF.LXMessage.DIRECT
+                            if not self.message_router.delivery_link_available(from_addr) and RNS.Identity.current_ratchet_id(from_addr) != None:
+                                RNS.log(f"Have ratchet for {RNS.prettyhexrep(from_addr)}, requesting opportunistic delivery of telemetry request", RNS.LOG_DEBUG)
+                                desired_method = LXMF.LXMessage.OPPORTUNISTIC
+                            else:
+                                desired_method = LXMF.LXMessage.DIRECT
 
                         request_timebase = self.getpersistent(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.timebase") or now - self.telemetry_request_max_history
                         lxm_fields = { LXMF.FIELD_COMMANDS: [
@@ -1363,7 +1416,7 @@ class SidebandCore():
                         lxm.register_failed_callback(self.telemetry_request_finished)
 
                         if self.message_router.get_outbound_propagation_node() != None:
-                            if self.config["telemetry_try_propagation_on_fail"]:
+                            if self.config["telemetry_try_propagation_on_fail"] and not is_livetrack:
                                 lxm.try_propagation_on_fail = True
 
                         RNS.log(f"Sending telemetry request with timebase {request_timebase}", RNS.LOG_DEBUG)
@@ -1374,6 +1427,62 @@ class SidebandCore():
 
                 else:
                     return "not_sent"
+
+    def _is_tracking(self, object_addr):
+        return object_addr in self.live_tracked_objects
+
+    def is_tracking(self, object_addr, allow_cache=False):
+        if not RNS.vendor.platformutils.is_android():
+            return self._is_tracking(object_addr)
+        else:
+            if self.is_service:
+                return self._is_tracking(object_addr)
+            else:
+                try:
+                    return self.service_rpc_request({"is_tracking": object_addr})
+                except Exception as e:
+                    ed = "Error while getting tracking state over RPC: "+str(e)
+                    RNS.log(ed, RNS.LOG_DEBUG)
+                    return ed
+
+    def _start_tracking(self, object_addr, interval, duration):
+        RNS.log("Starting tracking of "+RNS.prettyhexrep(object_addr), RNS.LOG_DEBUG)
+        self.live_tracked_objects[object_addr] = [interval, 0, time.time()+duration]
+
+    def start_tracking(self, object_addr, interval, duration, allow_cache=False):
+        if not RNS.vendor.platformutils.is_android():
+            return self._start_tracking(object_addr, interval, duration)
+        else:
+            if self.is_service:
+                return self._start_tracking(object_addr, interval, duration)
+            else:
+                try:
+                    args = {"object_addr": object_addr, "interval": interval, "duration": duration}
+                    return self.service_rpc_request({"start_tracking": args})
+                except Exception as e:
+                    ed = "Error while starting tracking over RPC: "+str(e)
+                    RNS.log(ed, RNS.LOG_DEBUG)
+                    return ed
+
+    def _stop_tracking(self, object_addr):
+        RNS.log("Stopping tracking of "+RNS.prettyhexrep(object_addr), RNS.LOG_DEBUG)
+        if object_addr in self.live_tracked_objects:
+            self.live_tracked_objects.pop(object_addr)
+
+    def stop_tracking(self, object_addr, allow_cache=False):
+        if not RNS.vendor.platformutils.is_android():
+            return self._stop_tracking(object_addr)
+        else:
+            if self.is_service:
+                return self._stop_tracking(object_addr)
+            else:
+                try:
+                    args = {"object_addr": object_addr}
+                    return self.service_rpc_request({"stop_tracking": args})
+                except Exception as e:
+                    ed = "Error while stopping tracking over RPC: "+str(e)
+                    RNS.log(ed, RNS.LOG_DEBUG)
+                    return ed
 
     def _service_send_latest_telemetry(self, to_addr=None, stream=None, is_authorized_telemetry_request=False):
         if not RNS.vendor.platformutils.is_android():
@@ -1430,7 +1539,11 @@ class SidebandCore():
                         if self.config["telemetry_use_propagation_only"] == True:
                             desired_method = LXMF.LXMessage.PROPAGATED
                         else:
-                            desired_method = LXMF.LXMessage.DIRECT
+                            if not self.message_router.delivery_link_available(to_addr) and RNS.Identity.current_ratchet_id(to_addr) != None:
+                                RNS.log(f"Have ratchet for {RNS.prettyhexrep(to_addr)}, requesting opportunistic delivery of telemetry", RNS.LOG_DEBUG)
+                                desired_method = LXMF.LXMessage.OPPORTUNISTIC
+                            else:
+                                desired_method = LXMF.LXMessage.DIRECT
 
                         lxm_fields = self.get_message_fields(to_addr, is_authorized_telemetry_request=is_authorized_telemetry_request, signal_already_sent=True)
                         if lxm_fields == False and stream == None:
@@ -1841,6 +1954,14 @@ class SidebandCore():
                                 elif "get_lxm_stamp_cost" in call:
                                     args = call["get_lxm_stamp_cost"]
                                     connection.send(self.get_lxm_stamp_cost(args["lxm_hash"]))
+                                elif "is_tracking" in call:
+                                    connection.send(self.is_tracking(call["is_tracking"]))
+                                elif "start_tracking" in call:
+                                    args = call["start_tracking"]
+                                    connection.send(self.start_tracking(object_addr=args["object_addr"], interval=args["interval"], duration=args["duration"]))
+                                elif "stop_tracking" in call:
+                                    args = call["stop_tracking"]
+                                    connection.send(self.stop_tracking(object_addr=args["object_addr"]))
                                 else:
                                     connection.send(None)
 
@@ -1934,10 +2055,10 @@ class SidebandCore():
         # TODO: Remove this again at some point in the future
         db = self.__db_connect()
         dbc = db.cursor()
-        dbc.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lxm' AND sql LIKE '%extra%'")
+        dbc.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'announce' AND sql LIKE '%extra%'")
         result = dbc.fetchall()
         if len(result) == 0:
-            dbc.execute("ALTER TABLE lxm ADD COLUMN extra BLOB")
+            dbc.execute("ALTER TABLE announce ADD COLUMN extra BLOB")
         db.commit()
 
     def _db_initstate(self):
@@ -2494,8 +2615,16 @@ class SidebandCore():
                 for entry in result:
                     try:
                         if not entry[2] in added_dests:
-                            app_data = entry[3]
+                            app_data  = entry[3]
                             dest_type = entry[4]
+                            if entry[5] != None:
+                                try:
+                                    extras = msgpack.unpackb(entry[5])
+                                except Exception as e:
+                                    RNS.log(f"Error while unpacking extras from announce: {e}", RNS.LOG_ERROR)
+                                    extras = None
+                            else:
+                                extras = None
                             if dest_type == "lxmf.delivery":
                                 announced_name = LXMF.display_name_from_app_data(app_data)
                                 announced_cost = self.message_router.get_outbound_stamp_cost(entry[2])
@@ -2503,11 +2632,12 @@ class SidebandCore():
                                 announced_name = None
                                 announced_cost = None
                             announce = {
-                                "dest": entry[2],
-                                "name": announced_name,
-                                "cost": announced_cost,
-                                "time": entry[1],
-                                "type": dest_type
+                                "dest"  : entry[2],
+                                "name"  : announced_name,
+                                "cost"  : announced_cost,
+                                "time"  : entry[1],
+                                "type"  : dest_type,
+                                "extras": extras,
                             }
                             added_dests.append(entry[2])
                             announces.append(announce)
@@ -2921,7 +3051,7 @@ class SidebandCore():
 
             self.__event_conversation_changed(context_dest)
 
-    def _db_save_announce(self, destination_hash, app_data, dest_type="lxmf.delivery"):
+    def _db_save_announce(self, destination_hash, app_data, dest_type="lxmf.delivery", link_stats = None):
         with self.db_lock:
             db = self.__db_connect()
             dbc = db.cursor()
@@ -2935,14 +3065,16 @@ class SidebandCore():
             now = time.time()
             hash_material = str(time).encode("utf-8")+destination_hash+app_data+dest_type.encode("utf-8")
             announce_hash = RNS.Identity.full_hash(hash_material)
+            extras = msgpack.packb({"link_stats": link_stats})
 
-            query = "INSERT INTO announce (id, received, source, data, dest_type) values (?, ?, ?, ?, ?)"
+            query = "INSERT INTO announce (id, received, source, data, dest_type, extra) values (?, ?, ?, ?, ?, ?)"
             data = (
                 announce_hash,
                 now,
                 destination_hash,
                 app_data,
                 dest_type,
+                extras,
             )
 
             dbc.execute(query, data)
@@ -3466,6 +3598,28 @@ class SidebandCore():
                             except Exception as e:
                                 RNS.log("An error occurred while requesting scheduled telemetry from collector: "+str(e), RNS.LOG_ERROR)
 
+                stale_entries = []
+                if len(self.live_tracked_objects) > 0:
+                    now = time.time()
+                    for object_hash in self.live_tracked_objects:
+                        tracking_entry = self.live_tracked_objects[object_hash]
+                        tracking_int   = tracking_entry[0]
+                        tracking_last  = tracking_entry[1]
+                        tracking_end   = tracking_entry[2]
+
+                        if now < tracking_end:
+                            if now > tracking_last+tracking_int:
+                                RNS.log("Next live tracking request time reached for "+str(RNS.prettyhexrep(object_hash)))
+                                self.request_latest_telemetry(from_addr=object_hash, is_livetrack=True)
+                                tracking_entry[1] = time.time()
+                        else:
+                            stale_entries.append(object_hash)
+
+                    for object_hash in stale_entries:
+                        RNS.log("Terminating live tracking for "+RNS.prettyhexrep(object_hash)+", tracking duration reached", RNS.LOG_DEBUG)
+                        self.live_tracked_objects.pop(object_hash)
+
+
     def __start_jobs_deferred(self):
         if self.is_service:
             self.service_thread = threading.Thread(target=self._service_jobs, daemon=True)
@@ -3724,6 +3878,14 @@ class SidebandCore():
         if self.is_client:
             self.service_rpc_set_debug(debug)
 
+    def _log_handler(self, message):
+        self.log_deque.append(message)
+        print(message)
+
+    # TODO: Get service log on Android
+    def get_log(self):
+        return "\n".join(self.log_deque)
+
     def __start_jobs_immediate(self):
         if self.log_verbose:
             selected_level = 7 # debugging purposes
@@ -3731,7 +3893,20 @@ class SidebandCore():
             selected_level = 2
 
         self.setstate("init.loadingstate", "Substantiating Reticulum")
-        self.reticulum = RNS.Reticulum(configdir=self.rns_configdir, loglevel=selected_level)
+        
+        try:
+            self.reticulum = RNS.Reticulum(configdir=self.rns_configdir, loglevel=selected_level, logdest=self._log_handler)
+            if RNS.vendor.platformutils.is_android():
+                if self.is_service:
+                    if os.path.isfile(self.rns_configdir+"/config_template_invalid"):
+                        os.unlink(self.rns_configdir+"/config_template_invalid")
+                    else:
+                        pass
+
+        except Exception as e:
+            RNS.log(f"Error while instantiating Reticulum: {e}", RNS.LOG_ERROR)
+            RNS.log(f"Local configuration template changes will be ignored on next start", RNS.LOG_ERROR)
+            exit(255)
 
         if self.is_service:
             self.__start_rpc_listener()
@@ -4615,6 +4790,7 @@ class SidebandCore():
                 from http import server
                 import socketserver
                 import json
+                import ssl
 
                 webshare_dir = self.webshare_dir
                 port = 4444
@@ -4635,7 +4811,7 @@ class SidebandCore():
                                 self.send_response(200)
                                 self.send_header("Content-type", "text/json")
                                 self.end_headers()
-                                json_result = json.dumps(os.listdir(serve_root+"/pkg"))
+                                json_result = json.dumps(sorted(os.listdir(serve_root+"/pkg")))
                                 self.wfile.write(json_result.encode("utf-8"))
                             except Exception as e:
                                 self.send_response(500)
@@ -4650,6 +4826,8 @@ class SidebandCore():
                                 self.send_response(200)
                                 if path.lower().endswith(".apk"):
                                     self.send_header("Content-type", "application/vnd.android.package-archive")
+                                elif path.lower().endswith(".js"):
+                                    self.send_header("Content-type", "text/javascript")
                                 self.end_headers()
                                 self.wfile.write(data)
                             except Exception as e:
@@ -4659,7 +4837,36 @@ class SidebandCore():
                                 es = "Error"
                                 self.wfile.write(es.encode("utf-8"))
 
-                with socketserver.TCPServer(("", port), RequestHandler) as webserver:
+                #######################################################
+                # Override BaseHTTPRequestHandler method to squelch
+                # excessive exception logging when client signals
+                # invalid certificate to the server. This will always
+                # happen from some clients when using a self-signed
+                # certificate, so we don't care.
+                if not hasattr(server.BaseHTTPRequestHandler, "handle_orig"):
+                    server.BaseHTTPRequestHandler.handle_orig = server.BaseHTTPRequestHandler.handle
+                    def handle(self):
+                        try:
+                            self.handle_orig()
+                        except ssl.SSLError:
+                            pass
+                        except Exception as e:
+                            RNS.log("HTTP server exception: "+str(e), RNS.LOG_ERROR)
+                    server.BaseHTTPRequestHandler.handle = handle
+                #######################################################
+
+                socketserver.TCPServer.allow_reuse_address = True
+                class ThreadedHTTPServer(socketserver.ThreadingMixIn, server.HTTPServer):
+                    daemon_threads = True
+
+                with ThreadedHTTPServer(("", port), RequestHandler) as webserver:
+                    from sideband.certgen import ensure_certificate
+                    
+                    ensure_certificate(self.webshare_ssl_key_path, self.webshare_ssl_cert_path)
+                    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                    ssl_context.load_cert_chain(certfile=self.webshare_ssl_cert_path, keyfile=self.webshare_ssl_key_path)
+                    webserver.socket = ssl_context.wrap_socket(webserver.socket, do_handshake_on_connect=False, server_side=True)
+
                     self.webshare_server = webserver
                     webserver.serve_forever()
                     self.webshare_server = None
@@ -4864,15 +5071,41 @@ class SidebandCore():
             if not self.reticulum.is_connected_to_shared_instance:
                 RNS.Transport.detach_interfaces()
 
-rns_config = """
+rns_config = """# This template is used to generate a
+# running configuration for Sideband's
+# internal RNS instance. Incorrect changes
+# or addition here may cause Sideband to
+# fail starting up or working properly.
+#
+# If Sideband detects that Reticulum
+# aborts at startup, due to an error in
+# configuration, any template changes
+# will be reset to this default.
+
 [reticulum]
-enable_transport = TRANSPORT_IS_ENABLED
-share_instance = Yes
-shared_instance_port = 37428
-instance_control_port = 37429
-panic_on_interface_error = No
+  # Don't change this line, use the UI
+  # setting for selecting whether RNS
+  # transport is enabled or disabled
+  enable_transport = TRANSPORT_IS_ENABLED
 
+  # Changing this setting will cause
+  # Sideband to not work.
+  share_instance = Yes
+
+  # Changing these options should only
+  # be done if you know what you're doing.
+  shared_instance_port = 37428
+  instance_control_port = 37429
+  panic_on_interface_error = No
+
+# Logging is controlled by settings
+# in the UI, so this section is mostly
+# not relevant in Sideband.
 [logging]
-loglevel = 3
+  loglevel = 3
 
+# No additional interfaces are currently
+# defined, but you can use this section
+# to do so.
+[interfaces]
 """

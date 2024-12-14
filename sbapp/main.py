@@ -24,6 +24,9 @@ import base64
 import threading
 import RNS.vendor.umsgpack as msgpack
 
+WINDOW_DEFAULT_WIDTH  = "494"
+WINDOW_DEFAULT_HEIGHT = "800"
+
 app_ui_scaling_path = None
 def apply_ui_scale():
     global app_ui_scaling_path
@@ -170,6 +173,11 @@ if not args.daemon:
     if RNS.vendor.platformutils.get_platform() != "android":
         local = os.path.dirname(__file__)
         sys.path.append(local)
+
+    if not RNS.vendor.platformutils.is_android():
+        from kivy.config import Config
+        Config.set("graphics", "width", WINDOW_DEFAULT_WIDTH)
+        Config.set("graphics", "height", WINDOW_DEFAULT_HEIGHT)
 
 if args.daemon:
     from .sideband.core import SidebandCore
@@ -557,6 +565,15 @@ class SidebandApp(MDApp):
             fn_bold=fb_path+"NotoSans-Bold.ttf",
             fn_italic=fb_path+"NotoSans-Italic.ttf",
             fn_bolditalic=fb_path+"NotoSans-BoldItalic.ttf")
+
+        LabelBase.register(name="mono",
+            fn_regular=fb_path+"RobotoMonoNerdFont-Regular.ttf")
+
+        LabelBase.register(name="term",
+            fn_regular=fb_path+"BigBlueTerm437NerdFont-Regular.ttf")
+
+        LabelBase.register(name="nf",
+            fn_regular=fb_path+"RobotoMonoNerdFont-Regular.ttf")
 
     def update_input_language(self):
         language = self.sideband.config["input_language"]
@@ -1405,6 +1422,8 @@ class SidebandApp(MDApp):
                     elif self.root.ids.screen_manager.current == "icons_screen":
                         self.close_sub_telemetry_action()
                     elif self.root.ids.screen_manager.current == "rnstatus_screen":
+                        self.close_sub_utilities_action()
+                    elif self.root.ids.screen_manager.current == "logviewer_screen":
                         self.close_sub_utilities_action()
                     else:
                         self.open_conversations(direction="right")
@@ -2501,30 +2520,35 @@ class SidebandApp(MDApp):
             return "Could not retrieve connectivity status"
     
     def connectivity_status(self, sender):
-        hs = dp(22)
+        if RNS.vendor.platformutils.is_android():
+            hs = dp(22)
+            yes_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
+            dialog = MDDialog(
+                title="Connectivity Status",
+                text=str(self.get_connectivity_text()),
+                buttons=[ yes_button ],
+                # elevation=0,
+            )
+            def cs_updater(dt):
+                dialog.text = str(self.get_connectivity_text())
+            def dl_yes(s):
+                self.connectivity_updater.cancel()
+                dialog.dismiss()
+                if self.connectivity_updater != None:
+                    self.connectivity_updater.cancel()
 
-        yes_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
-        dialog = MDDialog(
-            title="Connectivity Status",
-            text=str(self.get_connectivity_text()),
-            buttons=[ yes_button ],
-            # elevation=0,
-        )
-        def cs_updater(dt):
-            dialog.text = str(self.get_connectivity_text())
-        def dl_yes(s):
-            self.connectivity_updater.cancel()
-            dialog.dismiss()
+            yes_button.bind(on_release=dl_yes)
+            dialog.open()
+
             if self.connectivity_updater != None:
                 self.connectivity_updater.cancel()
 
-        yes_button.bind(on_release=dl_yes)
-        dialog.open()
+            self.connectivity_updater = Clock.schedule_interval(cs_updater, 2.0)
 
-        if self.connectivity_updater != None:
-            self.connectivity_updater.cancel()
-
-        self.connectivity_updater = Clock.schedule_interval(cs_updater, 2.0)
+        else:
+            if not self.utilities_ready:
+                self.utilities_init()
+            self.utilities_screen.rnstatus_action()
 
     def ingest_lxm_action(self, sender):
         def cb(dt):
@@ -3009,6 +3033,11 @@ class SidebandApp(MDApp):
                 self.sideband.save_configuration()
                 self.update_ui_theme()
 
+            def save_classic_message_colors(sender=None, event=None):
+                self.sideband.config["classic_message_colors"] = self.settings_screen.ids.settings_classic_message_colors.active
+                self.sideband.save_configuration()
+                self.update_ui_theme()
+
             def save_display_style_in_contact_list(sender=None, event=None):
                 self.sideband.config["display_style_in_contact_list"] = self.settings_screen.ids.display_style_in_contact_list.active
                 self.sideband.save_configuration()
@@ -3018,6 +3047,10 @@ class SidebandApp(MDApp):
                 self.sideband.config["display_style_from_all"] = not self.settings_screen.ids.display_style_from_trusted_only.active
                 self.sideband.save_configuration()
                 self.sideband.setstate("wants.viewupdate.conversations", True)
+
+            def save_trusted_markup_only(sender=None, event=None):
+                self.sideband.config["trusted_markup_only"] = self.settings_screen.ids.settings_trusted_markup_only.active
+                self.sideband.save_configuration()
 
             def save_advanced_stats(sender=None, event=None):
                 self.sideband.config["advanced_stats"] = self.settings_screen.ids.settings_advanced_statistics.active
@@ -3170,6 +3203,9 @@ class SidebandApp(MDApp):
             self.settings_screen.ids.settings_eink_mode.active = self.sideband.config["eink_mode"]
             self.settings_screen.ids.settings_eink_mode.bind(active=save_eink_mode)
 
+            self.settings_screen.ids.settings_classic_message_colors.active = self.sideband.config["classic_message_colors"]
+            self.settings_screen.ids.settings_classic_message_colors.bind(active=save_classic_message_colors)
+
             self.settings_screen.ids.display_style_in_contact_list.active = self.sideband.config["display_style_in_contact_list"]
             self.settings_screen.ids.display_style_in_contact_list.bind(active=save_display_style_in_contact_list)
 
@@ -3190,6 +3226,9 @@ class SidebandApp(MDApp):
 
             self.settings_screen.ids.settings_lxmf_ignore_unknown.active = self.sideband.config["lxmf_ignore_unknown"]
             self.settings_screen.ids.settings_lxmf_ignore_unknown.bind(active=save_lxmf_ignore_unknown)
+
+            self.settings_screen.ids.settings_trusted_markup_only.active = self.sideband.config["trusted_markup_only"]
+            self.settings_screen.ids.settings_trusted_markup_only.bind(active=save_trusted_markup_only)
 
             self.settings_screen.ids.settings_ignore_invalid_stamps.active = self.sideband.config["lxmf_ignore_invalid_stamps"]
             self.settings_screen.ids.settings_ignore_invalid_stamps.bind(active=save_lxmf_ignore_invalid_stamps)
@@ -3639,6 +3678,7 @@ class SidebandApp(MDApp):
     ######################################
     def repository_action(self, sender=None, direction="left"):
         if self.repository_ready:
+            self.repository_update_info()
             self.repository_open(direction=direction)
         else:
             self.loader_action(direction=direction)
@@ -3675,9 +3715,9 @@ class SidebandApp(MDApp):
         info += "If you want to share the openCom Companion application itself via the repository server, you must first download it into the local repository, using the \"Update Content\" button below.\n\n"
         info += "To make the repository available on your local network, simply start it below, and it will become browsable on a local IP address for anyone connected to the same WiFi or wired network.\n\n"
         if self.sideband.webshare_server != None:
-            if RNS.vendor.platformutils.is_android():                    
-                def getIP():
-                    adrs = []
+            def getIP():
+                adrs = []
+                if RNS.vendor.platformutils.is_android():
                     try:
                         from jnius import autoclass
                         import ipaddress
@@ -3700,24 +3740,30 @@ class SidebandApp(MDApp):
                         RNS.log("Error while getting repository IP address: "+str(e), RNS.LOG_ERROR)
                         return None
 
-                    return adrs
-
-                ips = getIP()
-                if ips == None or len(ips) == 0:
-                    info += "The repository server is running, but the local device IP address could not be determined.\n\nYou can access the repository by pointing a browser to: http://DEVICE_IP:4444/"
-                    self.reposository_url = None
                 else:
-                    ipstr = ""
-                    for ip in ips:
-                        ipstr += "http://"+str(ip)+":4444/\n"
-                        self.reposository_url = ipstr
+                    import socket
+                    adrs.append(socket.gethostbyname(socket.gethostname()))
 
-                    ms = "" if len(ips) == 1 else "es"
-                    info += "The repository server is running at the following address"+ms+":\n [u][ref=link]"+ipstr+"[/ref][u]"
-                    self.repository_screen.ids.repository_info.bind(on_ref_press=self.repository_link_action)
+                return adrs
 
-            self.repository_screen.ids.repository_enable_button.disabled = True
-            self.repository_screen.ids.repository_disable_button.disabled = False
+            ips = getIP()
+            if ips == None or len(ips) == 0:
+                info += "The repository server is running, but the local device IP address could not be determined.\n\nYou can access the repository by pointing a browser to: https://DEVICE_IP:4444/"
+                self.reposository_url = None
+            else:
+                ipstr = ""
+                for ip in ips:
+                    ipstr += "https://"+str(ip)+":4444/\n"
+                    self.reposository_url = ipstr
+
+                ms = "" if len(ips) == 1 else "es"
+                info += "The repository server is running at the following address"+ms+":\n [u][ref=link]"+ipstr+"[/ref][u]"
+                self.repository_screen.ids.repository_info.bind(on_ref_press=self.repository_link_action)
+
+            def cb(dt):
+                self.repository_screen.ids.repository_enable_button.disabled = True
+                self.repository_screen.ids.repository_disable_button.disabled = False
+            Clock.schedule_once(cb, 0.1)
 
         else:
             self.repository_screen.ids.repository_enable_button.disabled = False
@@ -3739,39 +3785,85 @@ class SidebandApp(MDApp):
         def update_job(sender=None):
             try:
                 import requests
+                ### RNode Firmwares ###########
+                if True:
+                    downloads = []
+                    try:
+                        release_url = "https://api.github.com/repos/markqvist/rnode_firmware/releases"
+                        with requests.get(release_url) as response:
+                            releases = response.json()
+                            release = releases[0]
+                            assets = release["assets"]
+                            for asset in assets:
+                                if asset["name"].lower().startswith("rnode_firmware"):
+                                    fw_url = asset["browser_download_url"]
+                                    pkgname = asset["name"]
+                                    fw_version = release["tag_name"]
+                                    RNS.log(f"Found version {fw_version} artefact {pkgname} at {fw_url}", RNS.LOG_DEBUG)
+                                    downloads.append([fw_url, pkgname, fw_version])
 
-                # Get release info
-                apk_version = None
-                apk_url = None
-                pkgname = None
-                try:
-                    release_url = "https://api.github.com/repos/markqvist/sideband/releases"
-                    with requests.get(release_url) as response:
-                        releases = response.json()
-                        release = releases[0]
-                        assets = release["assets"]
-                        for asset in assets:
-                            if asset["name"].lower().endswith(".apk"):
-                                apk_url = asset["browser_download_url"]
-                                pkgname = asset["name"]
-                                apk_version = release["tag_name"]
-                                RNS.log(f"Found version {apk_version} artefact {pkgname} at {apk_url}")
-                except Exception as e:
-                    self.repository_screen.ids.repository_update.text = f"Downloading release info failed with the error:\n"+str(e)
-                    return
+                    except Exception as e:
+                        self.repository_screen.ids.repository_update.text = f"Downloading RNode firmware release info failed with the error:\n"+str(e)
+                        return
 
-                self.repository_screen.ids.repository_update.text = "Downloading: "+str(apk_url)
-                with requests.get(apk_url, stream=True) as response:
-                    with open("./dl_tmp", "wb") as tmp_file:
-                        cs = 32*1024
-                        tds = 0
-                        for chunk in response.iter_content(chunk_size=cs):
-                            tmp_file.write(chunk)
-                            tds += cs
-                            self.repository_screen.ids.repository_update.text = "Downloaded "+RNS.prettysize(tds)+" of "+str(pkgname)
+                    try:
+                        for download in downloads:
+                            fw_url = download[0]
+                            pkgname = download[1]
+                            self.repository_screen.ids.repository_update.text = "Downloading: "+str(pkgname)
+                            with requests.get(fw_url, stream=True) as response:
+                                with open("./dl_tmp", "wb") as tmp_file:
+                                    cs = 32*1024
+                                    tds = 0
+                                    for chunk in response.iter_content(chunk_size=cs):
+                                        tmp_file.write(chunk)
+                                        tds += cs
+                                        self.repository_screen.ids.repository_update.text = "Downloaded "+RNS.prettysize(tds)+" of "+str(pkgname)
 
-                    os.rename("./dl_tmp", f"./share/pkg/{pkgname}")
-                    self.repository_screen.ids.repository_update.text = f"Added {pkgname} to the repository!"
+                                os.rename("./dl_tmp", f"{self.sideband.webshare_dir}/pkg/{pkgname}")
+                                self.repository_screen.ids.repository_update.text = f"Added {pkgname} to the repository!"
+
+                    except Exception as e:
+                        self.repository_screen.ids.repository_update.text = f"Downloading RNode firmware failed with the error:\n"+str(e)
+                        return
+
+                ### Sideband APK File #########
+                if True:
+                    # Get release info
+                    apk_version = None
+                    apk_url = None
+                    pkgname = None
+                    try:
+                        release_url = "https://api.github.com/repos/markqvist/sideband/releases"
+                        with requests.get(release_url) as response:
+                            releases = response.json()
+                            release = releases[0]
+                            assets = release["assets"]
+                            for asset in assets:
+                                if asset["name"].lower().endswith(".apk"):
+                                    apk_url = asset["browser_download_url"]
+                                    pkgname = asset["name"]
+                                    apk_version = release["tag_name"]
+                                    RNS.log(f"Found version {apk_version} artefact {pkgname} at {apk_url}", RNS.LOG_DEBUG)
+                    except Exception as e:
+                        self.repository_screen.ids.repository_update.text = f"Downloading Sideband APK release info failed with the error:\n"+str(e)
+                        return
+
+                    self.repository_screen.ids.repository_update.text = "Downloading: "+str(pkgname)
+                    with requests.get(apk_url, stream=True) as response:
+                        with open("./dl_tmp", "wb") as tmp_file:
+                            cs = 32*1024
+                            tds = 0
+                            for chunk in response.iter_content(chunk_size=cs):
+                                tmp_file.write(chunk)
+                                tds += cs
+                                self.repository_screen.ids.repository_update.text = "Downloaded "+RNS.prettysize(tds)+" of "+str(pkgname)
+
+                        os.rename("./dl_tmp", f"{self.sideband.webshare_dir}/pkg/{pkgname}")
+                        self.repository_screen.ids.repository_update.text = f"Added {pkgname} to the repository!"
+
+                self.repository_screen.ids.repository_update.text = f"Repository contents updated successfully!"
+
             except Exception as e:
                 self.repository_screen.ids.repository_update.text = f"Downloading contents failed with the error:\n"+str(e)
 
@@ -3788,15 +3880,7 @@ class SidebandApp(MDApp):
                 self.root.ids.screen_manager.add_widget(self.repository_screen)
 
             self.repository_screen.ids.repository_scrollview.effect_cls = ScrollEffect
-                                
             self.repository_update_info()
-
-            if not RNS.vendor.platformutils.is_android():
-                self.widget_hide(self.repository_screen.ids.repository_enable_button)
-                self.widget_hide(self.repository_screen.ids.repository_disable_button)
-                self.widget_hide(self.repository_screen.ids.repository_download_button)
-                self.repository_screen.ids.repository_info.text = "\nThe [b]Repository Webserver[/b] feature is currently only available on mobile devices."
-
             self.repository_ready = True
 
     def close_repository_action(self, sender=None):
