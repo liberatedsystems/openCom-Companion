@@ -1,6 +1,6 @@
 __debug_build__ = False
 __disable_shaders__ = False
-__version__ = "1.2.0"
+__version__ = "1.4.0"
 __variant__ = ""
 
 import sys
@@ -19,6 +19,7 @@ import RNS
 import LXMF
 import time
 import os
+import re
 import pathlib
 import base64
 import threading
@@ -196,7 +197,7 @@ if args.daemon:
     NewConv = DaemonElement; Telemetry = DaemonElement; ObjectDetails = DaemonElement; Announces = DaemonElement;
     Messages = DaemonElement; ts_format = DaemonElement; messages_screen_kv = DaemonElement; plyer = DaemonElement; multilingual_markup = DaemonElement;
     ContentNavigationDrawer = DaemonElement; DrawerList = DaemonElement; IconListItem = DaemonElement; escape_markup = DaemonElement;
-    SoundLoader = DaemonElement; BoxLayout = DaemonElement;
+    SoundLoader = DaemonElement; BoxLayout = DaemonElement; mdconv = DaemonElement;
 
 else:
     apply_ui_scale()
@@ -274,9 +275,7 @@ else:
         import sbapp.pyogg as pyogg
         from sbapp.pydub import AudioSegment
 
-        class toast:
-            def __init__(self, *kwargs):
-                pass
+        from kivymd.toast import toast
 
         from kivy.config import Config
         Config.set('input', 'mouse', 'mouse,disable_multitouch')
@@ -385,7 +384,8 @@ class SidebandApp(MDApp):
         self.connectivity_updater = None
         self.last_map_update = 0
         self.last_telemetry_received = 0
-        self.reposository_url = None
+        self.repository_url = None
+        self.rnode_flasher_url = None
 
 
     #################################################
@@ -1524,6 +1524,58 @@ class SidebandApp(MDApp):
 
     ### Messages (conversation) screen
     ######################################
+
+    def md_to_bbcode(self, text):
+        if not hasattr(self, "mdconv"):
+            if RNS.vendor.platformutils.is_android(): from md import mdconv
+            else: from .md import mdconv
+            self.mdconv = mdconv
+
+        converted = self.mdconv(text)
+        while converted.endswith("\n"):
+            converted = converted[:-1]
+
+        return converted
+
+    def process_bb_markup(self, text):
+        st = time.time()
+        ms = int(sp(14))
+        h1s = int(sp(20))
+        h2s = int(sp(18))
+        h3s = int(sp(16))
+        
+        if not hasattr(self, "pres"):
+            self.presz = re.compile(r"\[(?:size=\d*?)\]", re.IGNORECASE | re.MULTILINE )
+            self.pres = []
+            res = [ [r"\[(?:code|icode).*?\]", f"[font=mono][size={ms}]"],
+                    [r"\[\/(?:code|icode).*?\]", "[/size][/font]"],
+                    [r"\[(?:heading)\]", f"[b][size={h1s}]"],
+                    [r"\[(?:heading=1)*?\]", f"[b][size={h1s}]"],
+                    [r"\[(?:heading=2)*?\]", f"[b][size={h2s}]"],
+                    [r"\[(?:heading=3)*?\]", f"[b][size={h3s}]"],
+                    [r"\[(?:heading=).*?\]", f"[b][size={h3s}]"], # Match all remaining lower-level headings
+                    [r"\[\/(?:heading).*?\]", "[/size][/b]"],
+                    [r"\[(?:list).*?\]", ""],
+                    [r"\[\/(?:list).*?\]", ""],
+                    [r"\n\[(?:\*).*?\]", "\n - "],
+                    [r"\[(?:url).*?\]", ""], # Strip URLs for now
+                    [r"\[\/(?:url).*?\]", ""],
+                    [r"\[(?:img).*?\].*\[\/(?:img).*?\]", ""] # Strip images for now
+                   ]
+
+            for r in res:
+                self.pres.append([re.compile(r[0], re.IGNORECASE | re.MULTILINE ), r[1]])
+
+
+        size_matches = self.presz.findall(text)
+        for sm in size_matches:
+            text = text.replace(sm, f"{sm[:-1]}sp]")
+
+        for pr in self.pres:
+            text = pr[0].sub(pr[1], text)
+
+        return text
+
     def conversation_from_announce_action(self, context_dest):
         if self.sideband.has_conversation(context_dest):
             pass
@@ -1766,6 +1818,11 @@ class SidebandApp(MDApp):
         if self.root.ids.screen_manager.current == "messages_screen":
             self.object_details_action(self.messages_view, from_conv=True)
 
+    def outbound_mode_reset(self, sender=None):
+        self.outbound_mode_paper = False
+        self.outbound_mode_propagation = False
+        self.outbound_mode_command = False
+
     def message_propagation_action(self, sender):
         if self.outbound_mode_command:
             self.outbound_mode_paper = False
@@ -1795,18 +1852,10 @@ class SidebandApp(MDApp):
             tf = open(path, "rb")
             tf.close()
             self.attach_path = path
+            if self.outbound_mode_command:
+                self.outbound_mode_reset()
             
-            if RNS.vendor.platformutils.is_android():
-                toast("Attached \""+str(fbn)+"\"")
-            else:
-                ok_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
-                ate_dialog = MDDialog(
-                    title="File Attached",
-                    text="The file \""+str(fbn)+"\" was attached, and will be included with the next message sent.",
-                    buttons=[ ok_button ],
-                )
-                ok_button.bind(on_release=ate_dialog.dismiss)
-                ate_dialog.open()
+            toast("Attached \""+str(fbn)+"\"")
 
         except Exception as e:
             RNS.log(f"Error while attaching \"{fbn}\": "+str(e), RNS.LOG_ERROR)
@@ -2047,6 +2096,8 @@ class SidebandApp(MDApp):
 
             self.sideband.ui_stopped_recording()
             if self.message_process_audio():
+                if self.outbound_mode_command:
+                    self.outbound_mode_reset()
                 self.message_send_action()
         Clock.schedule_once(cb_s, 0.35)
 
@@ -2194,6 +2245,8 @@ class SidebandApp(MDApp):
                 else:
                     self.message_process_audio()
 
+                if self.outbound_mode_command:
+                    self.outbound_mode_reset()
                 self.update_message_widgets()
                 toast("Added recorded audio to message")
             
@@ -2320,18 +2373,7 @@ class SidebandApp(MDApp):
             self.attach_type = None
             self.update_message_widgets()
 
-            if RNS.vendor.platformutils.get_platform() == "android":
-                toast("Attachment removed")
-            else:
-                ok_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
-                ate_dialog = MDDialog(
-                    title="Attachment Removed",
-                    text="The attached resource was removed from the message",
-                    buttons=[ ok_button ],
-                )
-                ok_button.bind(on_release=ate_dialog.dismiss)
-                ate_dialog.open()
-
+            toast("Attachment removed")
 
     def shared_attachment_action(self, attachment_data):
         if not self.root.ids.screen_manager.current == "messages_screen":
@@ -2767,10 +2809,10 @@ class SidebandApp(MDApp):
             self.information_screen.ids.information_scrollview.effect_cls = ScrollEffect
             self.information_screen.ids.information_logo.icon = self.sideband.asset_dir+"/rns_256.png"
 
-            str_comps  = " - [b]Reticulum[/b] (MIT License)\n - [b]LXMF[/b] (MIT License)\n - [b]KivyMD[/b] (MIT License)"
+            str_comps  =   " - [b]Reticulum[/b] (MIT License)\n - [b]LXMF[/b] (MIT License)\n - [b]KivyMD[/b] (MIT License)"
             str_comps += "\n - [b]Kivy[/b] (MIT License)\n - [b]Codec2[/b] (LGPL License)\n - [b]PyCodec2[/b] (BSD-3 License)"
-            str_comps += "\n - [b]PyDub[/b] (MIT License)\n - [b]PyOgg[/b] (Public Domain)"
-            str_comps += "\n - [b]GeoidHeight[/b] (LGPL License)\n - [b]Python[/b] (PSF License)"
+            str_comps += "\n - [b]PyDub[/b] (MIT License)\n - [b]PyOgg[/b] (Public Domain) \n - [b]FFmpeg[/b] (GPL3 License)"
+            str_comps += "\n - [b]GeoidHeight[/b] (LGPL License)\n - [b]Paho MQTT[/b] (EPL2 License)\n - [b]Python[/b] (PSF License)"
             str_comps += "\n\nGo to [u][ref=link]https://unsigned.io/donate[/ref][/u] to support the upstream Sideband project.\n\nThe openCom Companion app is Copyright (c) 2024 Liberated Embedded Systems.\n\nPermission is granted to freely share and distribute binary copies of openCom Companion v"+__version__+" "+__variant__+", so long as no payment or compensation is charged for said distribution or sharing.\n\nIf you were charged or paid anything for this copy of openCom Companion, please report it to [b]contact@liberatedsystems.co.uk[/b].\n\nTHIS IS EXPERIMENTAL SOFTWARE - OPENCOM COMPANION COMES WITH ABSOLUTELY NO WARRANTY - USE AT YOUR OWN RISK AND RESPONSIBILITY"
             info = "This is "+self.root.ids.app_version_info.text+", on RNS v"+RNS.__version__+" and LXMF v"+LXMF.__version__+".\n\nHumbly built using the following open components:\n\n"+str_comps
             self.information_screen.ids.information_info.text = info
@@ -3052,6 +3094,10 @@ class SidebandApp(MDApp):
                 self.sideband.config["trusted_markup_only"] = self.settings_screen.ids.settings_trusted_markup_only.active
                 self.sideband.save_configuration()
 
+            def save_compose_in_markdown(sender=None, event=None):
+                self.sideband.config["compose_in_markdown"] = self.settings_screen.ids.settings_compose_in_markdown.active
+                self.sideband.save_configuration()
+
             def save_advanced_stats(sender=None, event=None):
                 self.sideband.config["advanced_stats"] = self.settings_screen.ids.settings_advanced_statistics.active
                 self.sideband.save_configuration()
@@ -3229,6 +3275,9 @@ class SidebandApp(MDApp):
 
             self.settings_screen.ids.settings_trusted_markup_only.active = self.sideband.config["trusted_markup_only"]
             self.settings_screen.ids.settings_trusted_markup_only.bind(active=save_trusted_markup_only)
+
+            self.settings_screen.ids.settings_compose_in_markdown.active = self.sideband.config["compose_in_markdown"]
+            self.settings_screen.ids.settings_compose_in_markdown.bind(active=save_compose_in_markdown)
 
             self.settings_screen.ids.settings_ignore_invalid_stamps.active = self.sideband.config["lxmf_ignore_invalid_stamps"]
             self.settings_screen.ids.settings_ignore_invalid_stamps.bind(active=save_lxmf_ignore_invalid_stamps)
@@ -3705,9 +3754,9 @@ class SidebandApp(MDApp):
             self.root.ids.screen_manager.transition = self.slide_transition
 
     def repository_link_action(self, sender=None, event=None):
-        if self.reposository_url != None:
+        if self.repository_url != None:
             def lj():
-                webbrowser.open(self.reposository_url)
+                webbrowser.open(self.repository_url)
             threading.Thread(target=lj, daemon=True).start()
 
     def repository_update_info(self, sender=None):
@@ -3749,27 +3798,38 @@ class SidebandApp(MDApp):
             ips = getIP()
             if ips == None or len(ips) == 0:
                 info += "The repository server is running, but the local device IP address could not be determined.\n\nYou can access the repository by pointing a browser to: https://DEVICE_IP:4444/"
-                self.reposository_url = None
+                self.repository_url = None
             else:
                 ipstr = ""
+                self.repository_url = None
                 for ip in ips:
-                    ipstr += "https://"+str(ip)+":4444/\n"
-                    self.reposository_url = ipstr
+                    ipurl = "https://" + str(ip) + ":4444/"
+                    ipstr += "[u][ref=link]"+ipurl+"[/ref][u]\n"
+                    if self.repository_url == None:
+                        self.repository_url = ipurl
+                        self.rnode_flasher_url = ipurl+"mirrors/rnode-flasher/index.html"
 
                 ms = "" if len(ips) == 1 else "es"
-                info += "The repository server is running at the following address"+ms+":\n [u][ref=link]"+ipstr+"[/ref][u]"
+                info += "The repository server is running at the following address" + ms +":\n\n"+ipstr
                 self.repository_screen.ids.repository_info.bind(on_ref_press=self.repository_link_action)
 
             def cb(dt):
                 self.repository_screen.ids.repository_enable_button.disabled = True
                 self.repository_screen.ids.repository_disable_button.disabled = False
+                if hasattr(self, "wants_flasher_launch") and self.wants_flasher_launch == True:
+                    self.wants_flasher_launch = False
+                    if self.rnode_flasher_url != None:
+                        def lj():
+                            webbrowser.open(self.rnode_flasher_url)
+                        threading.Thread(target=lj, daemon=True).start()
+
             Clock.schedule_once(cb, 0.1)
 
         else:
             self.repository_screen.ids.repository_enable_button.disabled = False
             self.repository_screen.ids.repository_disable_button.disabled = True
 
-        info += "\n"
+        info += ""
         self.repository_screen.ids.repository_info.text = info
 
     def repository_start_action(self, sender=None):
@@ -3777,7 +3837,7 @@ class SidebandApp(MDApp):
         Clock.schedule_once(self.repository_update_info, 1.0)
 
     def repository_stop_action(self, sender=None):
-        self.reposository_url = None
+        self.repository_url = None
         self.sideband.stop_webshare() 
         Clock.schedule_once(self.repository_update_info, 0.75)
 
@@ -4686,7 +4746,11 @@ class SidebandApp(MDApp):
             valid = False
         
         try:
+<<<<<<< HEAD
             valid_vals = [7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 203.125, 250, 406.25, 500, 812.5, 1625]
+=======
+            valid_vals = [7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, 500, 203.125, 406.25, 812.5, 1625]
+>>>>>>> upstream/main
             val = float(self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text)
             if not val in valid_vals:
                 raise ValueError("Invalid bandwidth")
@@ -5373,7 +5437,11 @@ class SidebandApp(MDApp):
             self.bind_clipboard_actions(self.keys_screen.ids)
 
             self.keys_screen.ids.keys_scrollview.effect_cls = ScrollEffect
+<<<<<<< HEAD
             info = "Your primary encryption keys are stored in a Reticulum Identity within the openCom Companion app. If you want to backup this Identity for later use on this or another device, you can export it as a plain text blob, with the key data encoded in Base32 format. This will allow you to restore your address in openCom Companion or other LXMF clients at a later point.\n\n[b]Warning![/b] Anyone that gets access to the key data will be able to control your LXMF address, impersonate you, and read your messages. In is [b]extremely important[/b] that you keep the Identity data secure if you export it.\n\nBefore displaying or exporting your Identity data, make sure that no machine or person in your vicinity is able to see, copy or record your device screen or similar."
+=======
+            info = "Your primary encryption keys are stored in a Reticulum Identity within the Sideband app. If you want to backup this Identity for later use on this or another device, you can export it as a plain text blob, with the key data encoded in Base32 format. This will allow you to restore your address in Sideband or other LXMF clients at a later point.\n\n[b]Warning![/b] Anyone that gets access to the key data will be able to control your LXMF address, impersonate you, and read your messages. It is [b]extremely important[/b] that you keep the Identity data secure if you export it.\n\nBefore displaying or exporting your Identity data, make sure that no machine or person in your vicinity is able to see, copy or record your device screen or similar."
+>>>>>>> upstream/main
 
             if not RNS.vendor.platformutils.get_platform() == "android":
                 self.widget_hide(self.keys_screen.ids.keys_share)
@@ -6276,8 +6344,23 @@ class SidebandApp(MDApp):
             self.map_action()
             self.map_show(location)
 
-    def map_display_telemetry(self, sender=None):
-        self.object_details_action(sender)
+    def map_display_telemetry(self, sender=None, event=None):
+        alt_event = False
+        if sender != None:
+            if hasattr(sender, "last_touch"):
+                if hasattr(sender.last_touch, "button"):
+                    if sender.last_touch.button == "right":
+                        alt_event = True
+
+        if alt_event:
+            try:
+                if hasattr(sender, "source_dest"):
+                    self.sideband.request_latest_telemetry(from_addr=sender.source_dest)
+                    toast("Telemetry request sent")
+            except Exception as e:
+                RNS.log(f"Could not request telemetry update: {e}", RNS.LOG_ERROR)
+        else:
+            self.object_details_action(sender)
 
     def map_display_own_telemetry(self, sender=None):
         self.sideband.update_telemetry()

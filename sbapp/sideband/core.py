@@ -7,6 +7,7 @@ import struct
 import sqlite3
 import random
 import shlex
+import re
 
 import RNS.vendor.umsgpack as msgpack
 import RNS.Interfaces.Interface as Interface
@@ -20,6 +21,7 @@ from collections import deque
 from .res import sideband_fb_data
 from .sense import Telemeter, Commands
 from .plugins import SidebandCommandPlugin, SidebandServicePlugin, SidebandTelemetryPlugin
+from .mqtt import MQTT
 
 if RNS.vendor.platformutils.get_platform() == "android":
     import plyer
@@ -64,11 +66,16 @@ class PropagationNodeDetector():
                         # age = 0
                         pass
 
-                    link_stats = {"rssi": self.owner_app.sideband.reticulum.get_packet_rssi(announce_packet_hash),
-                                 "snr": self.owner_app.sideband.reticulum.get_packet_snr(announce_packet_hash),
-                                 "q": self.owner_app.sideband.reticulum.get_packet_q(announce_packet_hash)}
+                    if self.owner_app != None:
+                        stat_endpoint = self.owner_app.sideband
+                    else:
+                        stat_endpoint = self.owner
 
-                    RNS.log("Detected active propagation node "+RNS.prettyhexrep(destination_hash)+" emission "+str(age)+" seconds ago, "+str(hops)+" hops away")
+                    link_stats = {"rssi": stat_endpoint.reticulum.get_packet_rssi(announce_packet_hash),
+                                 "snr": stat_endpoint.reticulum.get_packet_snr(announce_packet_hash),
+                                 "q": stat_endpoint.reticulum.get_packet_q(announce_packet_hash)}
+
+                    RNS.log("Detected active propagation node "+RNS.prettyhexrep(destination_hash)+" emission "+str(age)+" seconds ago, "+str(hops)+" hops away", RNS.LOG_EXTREME)
                     self.owner.log_announce(destination_hash, app_data, dest_type=PropagationNodeDetector.aspect_filter, link_stats=link_stats)
 
                     if self.owner.config["lxmf_propagation_node"] == None:
@@ -84,10 +91,10 @@ class PropagationNodeDetector():
                         pass
 
                 else:
-                    RNS.log(f"Received malformed propagation node announce from {RNS.prettyhexrep(destination_hash)} with data: {app_data}", RNS.LOG_DEBUG)
+                    RNS.log(f"Received malformed propagation node announce from {RNS.prettyhexrep(destination_hash)} with data: {app_data}", RNS.LOG_EXTREME)
 
             else:
-                RNS.log(f"Received malformed propagation node announce from {RNS.prettyhexrep(destination_hash)} with data: {app_data}", RNS.LOG_DEBUG)
+                RNS.log(f"Received malformed propagation node announce from {RNS.prettyhexrep(destination_hash)} with data: {app_data}", RNS.LOG_EXTREME)
 
         except Exception as e:
             RNS.log("Error while processing received propagation node announce: "+str(e))
@@ -106,8 +113,10 @@ class SidebandCore():
     SERVICE_JOB_INTERVAL   = 1
     PERIODIC_JOBS_INTERVAL = 60
     PERIODIC_SYNC_RETRY = 360
+    TELEMETRY_KEEP     = 60*60*24*7
     TELEMETRY_INTERVAL = 60
     SERVICE_TELEMETRY_INTERVAL = 300
+    TELEMETRY_CLEAN_INTERVAL = 3600
 
     IF_CHANGE_ANNOUNCE_MIN_INTERVAL = 3.5  # In seconds
     AUTO_ANNOUNCE_RANDOM_MIN        = 90   # In minutes
@@ -122,19 +131,20 @@ class SidebandCore():
         # Add the announce to the directory announce
         # stream logger
 
-        link_stats = {"rssi": self.reticulum.get_packet_rssi(announce_packet_hash),
-                     "snr": self.reticulum.get_packet_snr(announce_packet_hash),
-                     "q": self.reticulum.get_packet_q(announce_packet_hash)}
+        if self.reticulum != None:
+            link_stats = {"rssi": self.reticulum.get_packet_rssi(announce_packet_hash),
+                         "snr": self.reticulum.get_packet_snr(announce_packet_hash),
+                         "q": self.reticulum.get_packet_q(announce_packet_hash)}
 
-        # This reformats the new v0.5.0 announce data back to the expected format
-        # for Sidebands database and other handling functions.
-        dn = LXMF.display_name_from_app_data(app_data)
-        sc = LXMF.stamp_cost_from_app_data(app_data)
-        app_data = b""
-        if dn != None:
-            app_data = dn.encode("utf-8")
+            # This reformats the new v0.5.0 announce data back to the expected format
+            # for Sidebands database and other handling functions.
+            dn = LXMF.display_name_from_app_data(app_data)
+            sc = LXMF.stamp_cost_from_app_data(app_data)
+            app_data = b""
+            if dn != None:
+                app_data = dn.encode("utf-8")
 
-        self.log_announce(destination_hash, app_data, dest_type=SidebandCore.aspect_filter, stamp_cost=sc, link_stats=link_stats)
+            self.log_announce(destination_hash, app_data, dest_type=SidebandCore.aspect_filter, stamp_cost=sc, link_stats=link_stats)
 
     def __init__(self, owner_app, config_path = None, is_service=False, is_client=False, android_app_dir=None, verbose=False, owner_service=None, service_context=None, is_daemon=False, load_config_only=False):
         self.is_service = is_service
@@ -166,6 +176,8 @@ class SidebandCore():
         self.pending_telemetry_send_try = 0
         self.pending_telemetry_send_maxtries = 2
         self.telemetry_send_blocked_until = 0
+        self.telemetry_clean_interval = self.TELEMETRY_CLEAN_INTERVAL
+        self.last_telemetry_clean = 0
         self.pending_telemetry_request = False
         self.telemetry_request_max_history = 7*24*60*60
         self.live_tracked_objects = {}
@@ -181,6 +193,7 @@ class SidebandCore():
         self.allow_service_dispatch = True
         self.version_str = ""
         self.config_template = rns_config
+        self.default_config_template = rns_config
 
         if config_path == None:
             self.app_dir     = plyer.storagepath.get_home_dir()+"/.config/occ"
@@ -250,6 +263,8 @@ class SidebandCore():
 
         self.webshare_ssl_key_path  = self.app_dir+"/app_storage/ssl_key.pem"
         self.webshare_ssl_cert_path = self.app_dir+"/app_storage/ssl_cert.pem"
+
+        self.mqtt = None
         
         self.first_run     = True
         self.saving_configuration = False
@@ -449,6 +464,7 @@ class SidebandCore():
         self.config["eink_mode"] = True
         self.config["lxm_limit_1mb"] = True
         self.config["trusted_markup_only"] = False
+        self.config["compose_in_markdown"] = False
 
         # Connectivity
         self.config["connect_transport"] = False
@@ -644,6 +660,8 @@ class SidebandCore():
             self.config["hq_ptt"] = False
         if not "trusted_markup_only" in self.config:
             self.config["trusted_markup_only"] = False
+        if not "compose_in_markdown" in self.config:
+            self.config["compose_in_markdown"] = False
 
         if not "input_language" in self.config:
             self.config["input_language"] = None
@@ -781,6 +799,18 @@ class SidebandCore():
             self.config["telemetry_request_interval"] = 43200
         if not "telemetry_collector_enabled" in self.config:
             self.config["telemetry_collector_enabled"] = False
+        if not "telemetry_to_mqtt" in self.config:
+            self.config["telemetry_to_mqtt"] = False
+        if not "telemetry_mqtt_host" in self.config:
+            self.config["telemetry_mqtt_host"] = None
+        if not "telemetry_mqtt_port" in self.config:
+            self.config["telemetry_mqtt_port"] = None
+        if not "telemetry_mqtt_user" in self.config:
+            self.config["telemetry_mqtt_user"] = None
+        if not "telemetry_mqtt_pass" in self.config:
+            self.config["telemetry_mqtt_pass"] = None
+        if not "telemetry_mqtt_validate_ssl" in self.config:
+            self.config["telemetry_mqtt_validate_ssl"] = False
 
         if not "telemetry_icon" in self.config:
             self.config["telemetry_icon"] = SidebandCore.DEFAULT_APPEARANCE[0]
@@ -832,6 +862,8 @@ class SidebandCore():
             self.config["telemetry_s_acceleration"] = False
         if not "telemetry_s_proximity" in self.config:
             self.config["telemetry_s_proximity"] = False
+        if not "telemetry_s_rns_transport" in self.config:
+            self.config["telemetry_s_rns_transport"] = False
         if not "telemetry_s_fixed_location" in self.config:
             self.config["telemetry_s_fixed_location"] = False
         if not "telemetry_s_fixed_latlon" in self.config:
@@ -1042,7 +1074,7 @@ class SidebandCore():
                 app_data = b""
             if type(app_data) != bytes:
                 app_data = msgpack.packb([app_data, stamp_cost])
-            RNS.log("Received "+str(dest_type)+" announce for "+RNS.prettyhexrep(dest)+" with data: "+str(app_data), RNS.LOG_DEBUG)
+            RNS.log("Received "+str(dest_type)+" announce for "+RNS.prettyhexrep(dest), RNS.LOG_DEBUG)
             self._db_save_announce(dest, app_data, dest_type, link_stats)
             self.setstate("app.flags.new_announces", True)
 
@@ -1929,6 +1961,10 @@ class SidebandCore():
                                         image=args["image"],
                                         audio=args["audio"])
                                     connection.send(send_result)
+                                elif "cancel_message" in call:
+                                    args = call["cancel_message"]
+                                    cancel_result = self.cancel_message(args["message_id"])
+                                    connection.send(cancel_result)
                                 elif "send_command" in call:
                                     args = call["send_command"]
                                     send_result = self.send_command(
@@ -2318,6 +2354,11 @@ class SidebandCore():
                     return
 
                 self.setstate("app.flags.last_telemetry", time.time())
+
+                if self.config["telemetry_to_mqtt"] == True:
+                    def mqtt_job():
+                        self.mqtt_handle_telemetry(context_dest, telemetry)
+                    threading.Thread(target=mqtt_job, daemon=True).start()
 
                 return telemetry
 
@@ -2747,7 +2788,7 @@ class SidebandCore():
             db.commit()
 
     def _db_clean_messages(self):
-        RNS.log("Purging stale messages... "+str(self.db_path))
+        RNS.log("Purging stale messages... ", RNS.LOG_DEBUG)
         with self.db_lock:
             db = self.__db_connect()
             dbc = db.cursor()
@@ -2755,6 +2796,20 @@ class SidebandCore():
             query = "delete from lxm where (state=:outbound_state or state=:sending_state);"
             dbc.execute(query, {"outbound_state": LXMF.LXMessage.OUTBOUND, "sending_state": LXMF.LXMessage.SENDING})
             db.commit()
+
+    def _db_clean_telemetry(self):
+        RNS.log("Cleaning telemetry... ", RNS.LOG_DEBUG)
+        clean_time = time.time()-self.TELEMETRY_KEEP
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+
+            query = f"delete from telemetry where (ts < {clean_time});"
+            dbc.execute(query, {"outbound_state": LXMF.LXMessage.OUTBOUND, "sending_state": LXMF.LXMessage.SENDING})
+            db.commit()
+
+            self.last_telemetry_clean = time.time()
+
 
     def _db_message_set_state(self, lxm_hash, state, is_retry=False, ratchet_id=None, originator_stamp=None):
         msg_extras = None
@@ -3135,6 +3190,14 @@ class SidebandCore():
         self.update_telemeter_config()
         self.setstate("app.flags.last_telemetry", time.time())
 
+    def mqtt_handle_telemetry(self, context_dest, telemetry):
+        if self.mqtt == None:
+            self.mqtt = MQTT()
+
+        self.mqtt.set_server(self.config["telemetry_mqtt_host"], self.config["telemetry_mqtt_port"])
+        self.mqtt.set_auth(self.config["telemetry_mqtt_user"], self.config["telemetry_mqtt_pass"])
+        self.mqtt.handle(context_dest, telemetry)
+
     def update_telemetry(self):
         try:
             try:
@@ -3200,7 +3263,9 @@ class SidebandCore():
                 else:
                     self.telemeter = Telemeter(android_context=self.service_context, service=True, location_provider=self.owner_service)
 
-            sensors = ["location", "information", "battery", "pressure", "temperature", "humidity", "magnetic_field", "ambient_light", "gravity", "angular_velocity", "acceleration", "proximity"]
+            sensors = ["location", "information", "battery", "pressure", "temperature", "humidity", "magnetic_field",
+                       "ambient_light", "gravity", "angular_velocity", "acceleration", "proximity", "rns_transport"]
+
             for sensor in sensors:
                 if self.config["telemetry_s_"+sensor]:
                     self.telemeter.enable(sensor)
@@ -3248,6 +3313,10 @@ class SidebandCore():
         if self.config["telemetry_enabled"] == True:
             self.update_telemeter_config()
             if self.telemeter != None:
+                if self.config["telemetry_to_mqtt"]:
+                    def mqtt_job():
+                        self.mqtt_handle_telemetry(self.lxmf_destination.hash, self.telemeter.packed())
+                    threading.Thread(target=mqtt_job, daemon=True).start()
                 return self.telemeter.read_all()
             else:
                 return {}
@@ -3541,6 +3610,9 @@ class SidebandCore():
                                     self.setpersistent("lxmf.syncretrying", False)
 
                 if self.config["telemetry_enabled"]:
+                    if time.time()-self.last_telemetry_clean > self.telemetry_clean_interval:
+                        self._db_clean_telemetry()
+
                     if self.config["telemetry_send_to_collector"]:
                         if self.config["telemetry_collector"] != None and self.config["telemetry_collector"] != self.lxmf_destination.hash:
                             try:
@@ -4354,6 +4426,21 @@ class SidebandCore():
                 RNS.log("An error occurred while getting message transfer stamp cost: "+str(e), RNS.LOG_ERROR)
                 return None
 
+    def _service_cancel_message(self, message_id):
+        if not RNS.vendor.platformutils.is_android():
+            return False
+        else:
+            if self.is_client:
+                try:
+                    return self.service_rpc_request({"cancel_message": {"message_id": message_id }})
+                
+                except Exception as e:
+                    RNS.log("Error while cancelling message over RPC: "+str(e), RNS.LOG_DEBUG)
+                    RNS.trace_exception(e)
+                    return False
+            else:
+                return False
+
     def _service_send_message(self, content, destination_hash, propagation, skip_fields=False, no_display=False, attachment = None, image = None, audio = None):
         if not RNS.vendor.platformutils.is_android():
             return False
@@ -4397,6 +4484,26 @@ class SidebandCore():
             else:
                 return False
 
+    def cancel_message(self, message_id):
+        if self.allow_service_dispatch and self.is_client:
+            try:
+                return self._service_cancel_message(message_id)
+
+            except Exception as e:
+                RNS.log("Error while cancelling message: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
+                return False
+
+        else:
+            try:
+                self.message_router.cancel_outbound(message_id)
+                return True
+
+            except Exception as e:
+                RNS.log("Error while cancelling message: "+str(e), RNS.LOG_ERROR)
+                RNS.trace_exception(e)
+                return False
+
     def send_message(self, content, destination_hash, propagation, skip_fields=False, no_display=False, attachment = None, image = None, audio = None):
         if self.allow_service_dispatch and self.is_client:
             try:
@@ -4436,6 +4543,14 @@ class SidebandCore():
                     fields[LXMF.FIELD_IMAGE] = image
                 if audio != None:
                     fields[LXMF.FIELD_AUDIO] = audio
+                md_sig = "#!md\n"
+                if content.startswith(md_sig):
+                    content = content[len(md_sig):]
+                    fields[LXMF.FIELD_RENDERER] = LXMF.RENDERER_MARKDOWN
+                elif self.config["compose_in_markdown"]:
+                    fields[LXMF.FIELD_RENDERER] = LXMF.RENDERER_MARKDOWN
+                elif self.has_bb_markup(content):
+                    fields[LXMF.FIELD_RENDERER] = LXMF.RENDERER_BBCODE
 
                 lxm = LXMF.LXMessage(dest, source, content, title="", desired_method=desired_method, fields = fields, include_ticket=self.is_trusted(destination_hash))
                 
@@ -4574,6 +4689,19 @@ class SidebandCore():
 
         self.setstate("lxm_uri_ingest.result", response)
 
+    def strip_bb_markup(self, text):
+        if not hasattr(self, "smr") or self.smr == None:
+            self.smr = re.compile(r"\[\/?(?:b|i|u|url|quote|code|img|color|size)*?.*?\]",re.IGNORECASE | re.MULTILINE )
+        return self.smr.sub("", text)
+
+    def has_bb_markup(self, text):
+        if not hasattr(self, "smr") or self.smr == None:
+            self.smr = re.compile(r"\[\/?(?:b|i|u|url|quote|code|img|color|size)*?.*?\]",re.IGNORECASE | re.MULTILINE )
+        if self.smr.match(text):
+            return True
+        else:
+            return False
+
     def lxm_ingest(self, message, originator = False):
         should_notify = False
         is_trusted = False
@@ -4656,7 +4784,7 @@ class SidebandCore():
         if should_notify:
             nlen = 128
             text = message.content.decode("utf-8")
-            notification_content = text[:nlen]
+            notification_content = self.strip_bb_markup(text[:nlen])
             if len(text) > nlen:
                 notification_content += " [...]"
 
@@ -4763,6 +4891,7 @@ class SidebandCore():
 
     def start(self):
         self._db_clean_messages()
+        self._db_clean_telemetry()
         self.__start_jobs_immediate()
 
         thread = threading.Thread(target=self.__start_jobs_deferred)
@@ -4988,6 +5117,10 @@ class SidebandCore():
             RNS.log("Error while handling commands: "+str(e), RNS.LOG_ERROR)
 
     def create_telemetry_collector_response(self, to_addr, timebase, is_authorized_telemetry_request=False):
+        if self.getstate(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.update_sending") == True:
+            RNS.log("Not sending new telemetry collector response, since an earlier transfer is already in progress", RNS.LOG_DEBUG)
+            return "in_progress"
+
         added_sources = {}
         sources = self.list_telemetry(after=timebase)
         only_latest = self.config["telemetry_requests_only_send_latest"]
@@ -5099,6 +5232,6 @@ rns_config = """# This template is used to generate a
 
 # No additional interfaces are currently
 # defined, but you can use this section
-# to do so.
+# to add additional custom interfaces.
 [interfaces]
 """

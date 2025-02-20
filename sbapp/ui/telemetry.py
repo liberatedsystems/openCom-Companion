@@ -44,6 +44,30 @@ class Telemetry():
         else:
             self.screen.ids.telemetry_collector.text = RNS.hexrep(self.app.sideband.config["telemetry_collector"], delimit=False)
 
+        self.screen.ids.telemetry_mqtt_host.bind(focus=self.telemetry_save)
+        if self.app.sideband.config["telemetry_mqtt_host"] == None:
+            self.screen.ids.telemetry_mqtt_host.text = ""
+        else:
+            self.screen.ids.telemetry_mqtt_host.text = self.app.sideband.config["telemetry_mqtt_host"]
+
+        self.screen.ids.telemetry_mqtt_port.bind(focus=self.telemetry_save)
+        if self.app.sideband.config["telemetry_mqtt_port"] == None:
+            self.screen.ids.telemetry_mqtt_port.text = ""
+        else:
+            self.screen.ids.telemetry_mqtt_port.text = self.app.sideband.config["telemetry_mqtt_port"]
+
+        self.screen.ids.telemetry_mqtt_user.bind(focus=self.telemetry_save)
+        if self.app.sideband.config["telemetry_mqtt_user"] == None:
+            self.screen.ids.telemetry_mqtt_user.text = ""
+        else:
+            self.screen.ids.telemetry_mqtt_user.text = self.app.sideband.config["telemetry_mqtt_user"]
+
+        self.screen.ids.telemetry_mqtt_pass.bind(focus=self.telemetry_save)
+        if self.app.sideband.config["telemetry_mqtt_pass"] == None:
+            self.screen.ids.telemetry_mqtt_pass.text = ""
+        else:
+            self.screen.ids.telemetry_mqtt_pass.text = self.app.sideband.config["telemetry_mqtt_pass"]
+
         self.screen.ids.telemetry_icon_preview.icon_color  = self.app.sideband.config["telemetry_fg"]
         self.screen.ids.telemetry_icon_preview.md_bg_color = self.app.sideband.config["telemetry_bg"]
         self.screen.ids.telemetry_icon_preview.icon = self.app.sideband.config["telemetry_icon"]
@@ -83,6 +107,9 @@ class Telemetry():
         
         self.screen.ids.telemetry_allow_requests_from_anyone.active = self.app.sideband.config["telemetry_allow_requests_from_anyone"]
         self.screen.ids.telemetry_allow_requests_from_anyone.bind(active=self.telemetry_save)
+
+        self.screen.ids.telemetry_to_mqtt.active = self.app.sideband.config["telemetry_to_mqtt"]
+        self.screen.ids.telemetry_to_mqtt.bind(active=self.telemetry_save)
         
         
         self.screen.ids.telemetry_scrollview.effect_cls = ScrollEffect
@@ -259,6 +286,11 @@ class Telemetry():
         self.app.sideband.config["telemetry_allow_requests_from_trusted"] = self.screen.ids.telemetry_allow_requests_from_trusted.active
         self.app.sideband.config["telemetry_allow_requests_from_anyone"] = self.screen.ids.telemetry_allow_requests_from_anyone.active
         self.app.sideband.config["telemetry_collector_enabled"] = self.screen.ids.telemetry_collector_enabled.active
+        self.app.sideband.config["telemetry_to_mqtt"] = self.screen.ids.telemetry_to_mqtt.active
+        self.app.sideband.config["telemetry_mqtt_host"] = self.screen.ids.telemetry_mqtt_host.text
+        self.app.sideband.config["telemetry_mqtt_port"] = self.screen.ids.telemetry_mqtt_port.text
+        self.app.sideband.config["telemetry_mqtt_user"] = self.screen.ids.telemetry_mqtt_user.text
+        self.app.sideband.config["telemetry_mqtt_pass"] = self.screen.ids.telemetry_mqtt_pass.text
         
         self.app.sideband.save_configuration()
         if run_telemetry_update:
@@ -366,6 +398,8 @@ class Telemetry():
         self.sensors_screen.ids.telemetry_s_accelerometer.bind(active=self.sensors_save)
         self.sensors_screen.ids.telemetry_s_proximity.active = self.app.sideband.config["telemetry_s_proximity"]
         self.sensors_screen.ids.telemetry_s_proximity.bind(active=self.sensors_save)
+        self.sensors_screen.ids.telemetry_s_rns_transport.active = self.app.sideband.config["telemetry_s_rns_transport"]
+        self.sensors_screen.ids.telemetry_s_rns_transport.bind(active=self.sensors_save)
         self.sensors_screen.ids.telemetry_s_information.active = self.app.sideband.config["telemetry_s_information"]
         self.sensors_screen.ids.telemetry_s_information.bind(active=self.sensors_save)
         self.sensors_screen.ids.telemetry_s_information_text.text = str(self.app.sideband.config["telemetry_s_information_text"])
@@ -434,6 +468,7 @@ class Telemetry():
         self.app.sideband.config["telemetry_s_angular_velocity"] = self.sensors_screen.ids.telemetry_s_gyroscope.active
         self.app.sideband.config["telemetry_s_acceleration"] = self.sensors_screen.ids.telemetry_s_accelerometer.active
         self.app.sideband.config["telemetry_s_proximity"] = self.sensors_screen.ids.telemetry_s_proximity.active
+        self.app.sideband.config["telemetry_s_rns_transport"] = self.sensors_screen.ids.telemetry_s_rns_transport.active
 
         if self.app.sideband.config["telemetry_s_information"] != self.sensors_screen.ids.telemetry_s_information.active:
             run_telemetry_update = True
@@ -881,6 +916,90 @@ MDScreen:
                             disabled: False
 
                 MDLabel:
+                    text: "MQTT Configuration"
+                    font_style: "H6"
+
+                MDLabel:
+                    id: telemetry_info6
+                    markup: True
+                    text: "\\nFor integration with other systems, you can configure Sideband to send all known telemetry data to an MQTT server in real-time as it is received or generated.\\n"
+                    size_hint_y: None
+                    text_size: self.width, None
+                    height: self.texture_size[1]
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
+                        text: "Send telemetry to MQTT"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: telemetry_to_mqtt
+                        pos_hint: {"center_y": 0.3}
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(24)
+                    size_hint_y: None
+                    padding: [dp(0),dp(0),dp(0),dp(0)]
+                    #height: dp(232)
+                    height: self.minimum_height
+
+                    MDTextField:
+                        id: telemetry_mqtt_host
+                        hint_text: "Server Hostname"
+                        text: ""
+                        font_size: dp(24)
+
+                MDBoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(24)
+                    size_hint_y: None
+                    padding: [dp(0),dp(0),dp(0),dp(0)]
+                    #height: dp(232)
+                    height: self.minimum_height
+
+                    MDTextField:
+                        id: telemetry_mqtt_port
+                        hint_text: "Server Port"
+                        text: ""
+                        font_size: dp(24)
+
+                MDBoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(24)
+                    size_hint_y: None
+                    padding: [dp(0),dp(0),dp(0),dp(0)]
+                    #height: dp(232)
+                    height: self.minimum_height
+
+                    MDTextField:
+                        id: telemetry_mqtt_user
+                        hint_text: "Username"
+                        text: ""
+                        font_size: dp(24)
+
+                MDBoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(24)
+                    size_hint_y: None
+                    padding: [dp(0),dp(0),dp(0),dp(60)]
+                    #height: dp(232)
+                    height: self.minimum_height
+
+                    MDTextField:
+                        id: telemetry_mqtt_pass
+                        password: True
+                        hint_text: "Password"
+                        text: ""
+                        font_size: dp(24)
+
+                MDLabel:
                     text: "Advanced Configuration"
                     font_style: "H6"
 
@@ -1208,6 +1327,21 @@ MDScreen:
 
                     MDSwitch:
                         id: telemetry_s_proximity
+                        pos_hint: {"center_y": 0.3}
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
+                        text: "Reticulum Transport Stats"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: telemetry_s_rns_transport
                         pos_hint: {"center_y": 0.3}
                         active: False
 

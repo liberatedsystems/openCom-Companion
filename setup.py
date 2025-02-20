@@ -114,8 +114,8 @@ setuptools.setup(
         ]
     },
     install_requires=[
-        "rns>=0.8.8",
-        "lxmf>=0.5.8",
+        "rns>=0.9.2",
+        "lxmf>=0.6.0",
         "kivy>=2.3.0",
         "pillow>=10.2.0",
         "qrcode",
@@ -123,6 +123,8 @@ setuptools.setup(
         "ffpyplayer",
         "sh",
         "numpy<=1.26.4",
+        "mistune>=3.0.2",
+        "beautifulsoup4",
         "pycodec2;sys.platform!='Windows' and sys.platform!='win32' and sys.platform!='darwin'",
         "pyaudio;sys.platform=='linux'",
         "pyobjus;sys.platform=='darwin'",

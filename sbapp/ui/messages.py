@@ -34,14 +34,14 @@ if RNS.vendor.platformutils.get_platform() == "android":
     import plyer
     from sideband.sense import Telemeter, Commands
     from ui.helpers import ts_format, file_ts_format, mdc
-    from ui.helpers import color_playing, color_received, color_delivered, color_propagated, color_paper, color_failed, color_unknown, intensity_msgs_dark, intensity_msgs_light, intensity_play_dark, intensity_play_light
-    from ui.helpers import color_received_alt, color_received_alt_light, color_delivered_alt, color_propagated_alt, color_paper_alt, color_failed_alt, color_unknown_alt, color_playing_alt, intensity_msgs_dark_alt, intensity_msgs_light_alt, intensity_delivered_alt_dark
+    from ui.helpers import color_playing, color_received, color_delivered, color_propagated, color_paper, color_failed, color_unknown, intensity_msgs_dark, intensity_msgs_light, intensity_play_dark, intensity_play_light, color_cancelled, intensity_cancelled
+    from ui.helpers import color_received_alt, color_received_alt_light, color_delivered_alt, color_propagated_alt, color_paper_alt, color_failed_alt, color_unknown_alt, color_playing_alt, intensity_msgs_dark_alt, intensity_msgs_light_alt, intensity_delivered_alt_dark, color_cancelled_alt
 else:
     import sbapp.plyer as plyer
     from sbapp.sideband.sense import Telemeter, Commands
     from .helpers import ts_format, file_ts_format, mdc
-    from .helpers import color_playing, color_received, color_delivered, color_propagated, color_paper, color_failed, color_unknown, intensity_msgs_dark, intensity_msgs_light, intensity_play_dark, intensity_play_light
-    from .helpers import color_received_alt, color_received_alt_light, color_delivered_alt, color_propagated_alt, color_paper_alt, color_failed_alt, color_unknown_alt, color_playing_alt, intensity_msgs_dark_alt, intensity_msgs_light_alt, intensity_delivered_alt_dark
+    from .helpers import color_playing, color_received, color_delivered, color_propagated, color_paper, color_failed, color_unknown, intensity_msgs_dark, intensity_msgs_light, intensity_play_dark, intensity_play_light, color_cancelled, intensity_cancelled
+    from .helpers import color_received_alt, color_received_alt_light, color_delivered_alt, color_propagated_alt, color_paper_alt, color_failed_alt, color_unknown_alt, color_playing_alt, intensity_msgs_dark_alt, intensity_msgs_light_alt, intensity_delivered_alt_dark, color_cancelled_alt
 
 if RNS.vendor.platformutils.is_darwin():
     from PIL import Image as PilImage
@@ -110,8 +110,6 @@ class Messages():
         msg = self.app.sideband.message(lxm_hash)
         if msg:
             close_button = MDRectangleFlatButton(text="Close", font_size=dp(18))
-            # d_items = [ ]
-            # d_items.append(DialogItem(IconLeftWidget(icon="postage-stamp"), text="[size="+str(ss)+"]Stamp[/size]"))
 
             d_text = ""
 
@@ -213,6 +211,7 @@ class Messages():
             c_paper      = color_paper_alt
             c_unknown    = color_unknown_alt
             c_failed     = color_failed_alt
+            c_cancelled  = color_cancelled_alt
         else:
             c_delivered  = color_delivered
             c_received   = color_received
@@ -221,6 +220,7 @@ class Messages():
             c_paper      = color_paper
             c_unknown    = color_unknown
             c_failed     = color_failed
+            c_cancelled  = color_cancelled
 
         for new_message in self.app.sideband.list_messages(self.context_dest, after=self.latest_message_timestamp,limit=limit):
             self.new_messages.append(new_message)
@@ -301,6 +301,17 @@ class Messages():
                         delivery_syms += " 📦"
                     delivery_syms = multilingual_markup(delivery_syms.encode("utf-8")).decode("utf-8")
 
+                    if msg["state"] > LXMF.LXMessage.SENT:
+                        if hasattr(w, "dmenu"):
+                            if hasattr(w.dmenu, "items"):
+                                remove_item = None
+                                for item in w.dmenu.items:
+                                    if item["text"] == "Cancel message":
+                                        remove_item = item
+                                        break
+                                if remove_item != None:
+                                    w.dmenu.items.remove(remove_item)
+
                     if msg["state"] == LXMF.LXMessage.OUTBOUND or msg["state"] == LXMF.LXMessage.SENDING or msg["state"] == LXMF.LXMessage.SENT:
                         w.md_bg_color = msg_color = mdc(c_unknown, intensity_msgs)
                         txstr = time.strftime(ts_format, time.localtime(msg["sent"]))
@@ -334,6 +345,12 @@ class Messages():
                             w.heading += f"\n[b]Audio Message[/b] ({alstr})"
                         m["state"] = msg["state"]
 
+                    att_heading_str = ""
+                    if hasattr(w, "has_attachment") and w.has_attachment:
+                        att_heading_str = "\n[b]Attachments[/b] "
+                        for attachment in w.attachments_field:
+                            att_heading_str += str(attachment[0])+", "
+                        att_heading_str = att_heading_str[:-2]
 
                     if msg["state"] == LXMF.LXMessage.DELIVERED:
                         w.md_bg_color = msg_color = mdc(c_delivered, intensity_delivered)
@@ -369,7 +386,7 @@ class Messages():
                         m["state"] = msg["state"]
 
                     if msg["state"] == LXMF.LXMessage.FAILED:
-                        w.md_bg_color = msg_color = mdc(c_failed, intensity_msgs)
+                        w.md_bg_color = msg_color = mdc(c_failed, intensity_cancelled)
                         txstr = time.strftime(ts_format, time.localtime(msg["sent"]))
                         titlestr = ""
                         if msg["title"]:
@@ -380,6 +397,34 @@ class Messages():
                             alstr = RNS.prettysize(w.audio_size)
                             w.heading += f"\n[b]Audio Message[/b] ({alstr})"
                         w.dmenu.items.append(w.dmenu.retry_item)
+
+                    if msg["state"] == LXMF.LXMessage.CANCELLED:
+                        w.md_bg_color = msg_color = mdc(c_cancelled, intensity_cancelled)
+                        txstr = time.strftime(ts_format, time.localtime(msg["sent"]))
+                        titlestr = ""
+                        if msg["title"]:
+                            titlestr = "[b]Title[/b] "+msg["title"].decode("utf-8")+"\n"
+                        w.heading = titlestr+"[b]Sent[/b] "+txstr+"\n[b]State[/b] Cancelled"
+                        m["state"] = msg["state"]
+                        if w.has_audio:
+                            alstr = RNS.prettysize(w.audio_size)
+                            w.heading += f"\n[b]Audio Message[/b] ({alstr})"
+                        w.dmenu.items.append(w.dmenu.retry_item)
+
+                    if msg["state"] == LXMF.LXMessage.REJECTED:
+                        w.md_bg_color = msg_color = mdc(c_cancelled, intensity_cancelled)
+                        txstr = time.strftime(ts_format, time.localtime(msg["sent"]))
+                        titlestr = ""
+                        if msg["title"]:
+                            titlestr = "[b]Title[/b] "+msg["title"].decode("utf-8")+"\n"
+                        w.heading = titlestr+"[b]Sent[/b] "+txstr+"\n[b]State[/b] Rejected"
+                        m["state"] = msg["state"]
+                        if w.has_audio:
+                            alstr = RNS.prettysize(w.audio_size)
+                            w.heading += f"\n[b]Audio Message[/b] ({alstr})"
+                        w.dmenu.items.append(w.dmenu.retry_item)
+
+                    w.heading += att_heading_str
 
 
     def hide_widget(self, wid, dohide=True):
@@ -427,6 +472,7 @@ class Messages():
             c_paper      = color_paper_alt
             c_unknown    = color_unknown_alt
             c_failed     = color_failed_alt
+            c_cancelled  = color_cancelled_alt
         else:
             c_delivered  = color_delivered
             c_received   = color_received
@@ -435,6 +481,7 @@ class Messages():
             c_paper      = color_paper
             c_unknown    = color_unknown
             c_failed     = color_failed
+            c_cancelled  = color_cancelled
 
         self.ids.message_text.font_name = self.app.input_font
 
@@ -443,13 +490,27 @@ class Messages():
 
         for m in self.new_messages:
             if not m["hash"] in self.added_item_hashes:
+                renderer = None
+                message_source = m["content"]
+                if "lxm" in m and m["lxm"] and m["lxm"].fields != None and LXMF.FIELD_RENDERER in m["lxm"].fields:
+                    renderer = m["lxm"].fields[LXMF.FIELD_RENDERER]
+
                 try:
                     if self.app.sideband.config["trusted_markup_only"] and not self.is_trusted:
                         message_input = str( escape_markup(m["content"].decode("utf-8")) ).encode("utf-8")
                     else:
                         message_input = m["content"]
+                        if renderer == LXMF.RENDERER_MARKDOWN:
+                            message_input = self.app.md_to_bbcode(message_input.decode("utf-8")).encode("utf-8")
+                            message_input = self.app.process_bb_markup(message_input.decode("utf-8")).encode("utf-8")
+                        elif renderer == LXMF.RENDERER_BBCODE:
+                            message_input = self.app.process_bb_markup(message_input.decode("utf-8")).encode("utf-8")
+                        else:
+                            message_input = str(escape_markup(m["content"].decode("utf-8"))).encode("utf-8")
+
                 except Exception as e:
                     RNS.log(f"Message content could not be decoded: {e}", RNS.LOG_DEBUG)
+                    RNS.trace_exception(e)
                     message_input = b""
 
                 if message_input.strip() == b"":
@@ -602,8 +663,16 @@ class Messages():
                         heading_str = titlestr+"[b]Created[/b] "+txstr+"\n[b]State[/b] Paper Message"
 
                     elif m["state"] == LXMF.LXMessage.FAILED:
-                        msg_color = mdc(c_failed, intensity_msgs)
+                        msg_color = mdc(c_failed, intensity_cancelled)
                         heading_str = titlestr+"[b]Sent[/b] "+txstr+"\n[b]State[/b] Failed"
+
+                    elif m["state"] == LXMF.LXMessage.CANCELLED:
+                        msg_color = mdc(c_cancelled, intensity_cancelled)
+                        heading_str = titlestr+"[b]Sent[/b] "+txstr+"\n[b]State[/b] Cancelled"
+
+                    elif m["state"] == LXMF.LXMessage.REJECTED:
+                        msg_color = mdc(c_cancelled, intensity_cancelled)
+                        heading_str = titlestr+"[b]Sent[/b] "+txstr+"\n[b]State[/b] Rejected"
 
                     elif m["state"] == LXMF.LXMessage.OUTBOUND or m["state"] == LXMF.LXMessage.SENDING:
                         msg_color = mdc(c_unknown, intensity_msgs)
@@ -618,9 +687,6 @@ class Messages():
                     heading_str = titlestr
                     if phy_stats_str != "" and self.app.sideband.config["advanced_stats"]:
                         heading_str += phy_stats_str+"\n"
-                    # TODO: Remove
-                    # if stamp_valid:
-                    #     txstr += f" [b]Stamp[/b] value is {stamp_value} "
 
                     heading_str += "[b]Sent[/b] "+txstr+delivery_syms
                     heading_str += "\n[b]Received[/b] "+rxstr
@@ -658,6 +724,9 @@ class Messages():
 
                 if has_attachment:
                     item.attachments_field = attachments_field
+                    item.has_attachment = True
+                else:
+                    item.has_attachment = False
 
                 if has_audio:
                     def play_audio(sender):
@@ -794,6 +863,13 @@ class Messages():
                 def gen_copy(msg, item):
                     def x():
                         Clipboard.copy(msg)
+                        item.dmenu.dismiss()
+
+                    return x
+
+                def gen_cancel(mhash, item):
+                    def x():
+                        self.app.sideband.cancel_message(mhash)
                         item.dmenu.dismiss()
 
                     return x
@@ -1080,7 +1156,7 @@ class Messages():
                                 "viewclass": "OneLineListItem",
                                 "text": "Copy message text",
                                 "height": dp(40),
-                                "on_release": gen_copy(message_input.decode("utf-8"), item)
+                                "on_release": gen_copy(message_source.decode("utf-8"), item)
                             },
                             {
                                 "text": "Delete",
@@ -1114,7 +1190,7 @@ class Messages():
                                 "viewclass": "OneLineListItem",
                                 "text": "Copy message text",
                                 "height": dp(40),
-                                "on_release": gen_copy(message_input.decode("utf-8"), item)
+                                "on_release": gen_copy(message_source.decode("utf-8"), item)
                             },
                             {
                                 "text": "Delete",
@@ -1132,7 +1208,7 @@ class Messages():
                                 "viewclass": "OneLineListItem",
                                 "text": "Copy",
                                 "height": dp(40),
-                                "on_release": gen_copy(message_input.decode("utf-8"), item)
+                                "on_release": gen_copy(message_source.decode("utf-8"), item)
                             },
                             {
                                 "text": "Delete",
@@ -1149,7 +1225,7 @@ class Messages():
                                     "viewclass": "OneLineListItem",
                                     "text": "Copy",
                                     "height": dp(40),
-                                    "on_release": gen_copy(message_input.decode("utf-8"), item)
+                                    "on_release": gen_copy(message_source.decode("utf-8"), item)
                                 },
                                 {
                                     "viewclass": "OneLineListItem",
@@ -1172,7 +1248,7 @@ class Messages():
                                     "viewclass": "OneLineListItem",
                                     "text": "Copy",
                                     "height": dp(40),
-                                    "on_release": gen_copy(message_input.decode("utf-8"), item)
+                                    "on_release": gen_copy(message_source.decode("utf-8"), item)
                                 },
                                 {
                                     "text": "Delete",
@@ -1195,6 +1271,14 @@ class Messages():
                                 "text": "Save attachment",
                                 "height": dp(40),
                                 "on_release": gen_save_attachment(item)
+                            }
+                            dm_items.append(extra_item)
+                        if m["source"] == self.app.sideband.lxmf_destination.hash and m["state"] <= LXMF.LXMessage.SENT:
+                            extra_item = {
+                                "viewclass": "OneLineListItem",
+                                "text": "Cancel message",
+                                "height": dp(40),
+                                "on_release": gen_cancel(m["hash"], item)
                             }
                             dm_items.append(extra_item)
 

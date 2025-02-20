@@ -33,6 +33,7 @@ class Telemeter():
             s.data = s.unpack(p[sid])
             s.synthesized = True
             s.active = True
+            s._telemeter = t
             t.sensors[name] = s
 
       return t
@@ -54,7 +55,9 @@ class Telemeter():
       Sensor.SID_POWER_PRODUCTION: PowerProduction, Sensor.SID_PROCESSOR: Processor,
       Sensor.SID_RAM: RandomAccessMemory, Sensor.SID_NVM: NonVolatileMemory,
       Sensor.SID_CUSTOM: Custom, Sensor.SID_TANK: Tank, Sensor.SID_FUEL: Fuel,
-    }
+      Sensor.SID_RNS_TRANSPORT: RNSTransport, Sensor.SID_LXMF_PROPAGATION: LXMFPropagation,
+      Sensor.SID_CONNECTION_MAP: ConnectionMap}
+
     self.available = {
       "time": Sensor.SID_TIME,
       "information": Sensor.SID_INFORMATION, "received": Sensor.SID_RECEIVED,
@@ -66,8 +69,14 @@ class Telemeter():
       "acceleration": Sensor.SID_ACCELERATION, "proximity": Sensor.SID_PROXIMITY,
       "power_consumption": Sensor.SID_POWER_CONSUMPTION, "power_production": Sensor.SID_POWER_PRODUCTION,
       "processor": Sensor.SID_PROCESSOR, "ram": Sensor.SID_RAM, "nvm": Sensor.SID_NVM,
-      "custom": Sensor.SID_CUSTOM, "tank": Sensor.SID_TANK, "fuel": Sensor.SID_FUEL
-    }
+      "custom": Sensor.SID_CUSTOM, "tank": Sensor.SID_TANK, "fuel": Sensor.SID_FUEL,
+      "rns_transport": Sensor.SID_RNS_TRANSPORT, "lxmf_propagation": Sensor.SID_LXMF_PROPAGATION,
+      "connection_map": Sensor.SID_CONNECTION_MAP}
+
+    self.names = {}
+    for name in self.available:
+      self.names[self.available[name]] = name
+
     self.from_packed = from_packed
     self.sensors = {}
     if not self.from_packed:
@@ -76,6 +85,12 @@ class Telemeter():
     self.location_provider = location_provider
     self.android_context = android_context
     self.service = service
+
+  def get_name(self, sid):
+    if sid in self.names:
+      return self.names[sid]
+    else:
+      return None
 
   def synthesize(self, sensor):
       if sensor in self.available:
@@ -195,6 +210,9 @@ class Sensor():
   SID_NVM               = 0x15
   SID_TANK              = 0x16
   SID_FUEL              = 0x17
+  SID_RNS_TRANSPORT     = 0x19
+  SID_LXMF_PROPAGATION  = 0x18
+  SID_CONNECTION_MAP    = 0x1A
   SID_CUSTOM            = 0xff
 
   def __init__(self, sid = None, stale_time = None):
@@ -268,6 +286,15 @@ class Sensor():
   def render(self, relative_to=None):
     return None
 
+  def render_mqtt(self, relative_to=None):
+    return None
+
+  def name(self):
+    if self._telemeter != None:
+      return self._telemeter.get_name(self._sid)
+    else:
+      return None
+
   def check_permission(self, permission):
     if self._telemeter != None:
       return self._telemeter.check_permission(permission)
@@ -319,6 +346,19 @@ class Time(Sensor):
 
     return rendered
 
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": "Timestamp",
+        f"{topic}/icon": "clock-time-ten-outline",
+        f"{topic}/utc": self.data["utc"],       
+      }
+    else:
+      rendered = None
+
+    return rendered
+
 class Information(Sensor):
   SID = Sensor.SID_INFORMATION
   STALE_TIME = 5
@@ -361,6 +401,19 @@ class Information(Sensor):
       "name": "Information",
       "values": { "contents": self.data["contents"] },
     }
+
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": "Information",
+        f"{topic}/icon": "information-variant",
+        f"{topic}/text": self.data["contents"],
+      }
+    else:
+      rendered = None
 
     return rendered
 
@@ -427,6 +480,22 @@ class Received(Sensor):
       "name": "Received",
       "values": self.data,
     }
+
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": "Received",
+        f"{topic}/icon": "arrow-down-bold-hexagon-outline",
+        f"{topic}/by": mqtt_desthash(self.data["by"]),
+        f"{topic}/via": mqtt_desthash(self.data["via"]),
+        f"{topic}/distance/geodesic": self.data["distance"]["geodesic"],
+        f"{topic}/distance/euclidian": self.data["distance"]["euclidian"],
+      }
+    else:
+      rendered = None
 
     return rendered
 
@@ -555,6 +624,22 @@ class Battery(Sensor):
 
     return rendered
 
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render()
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/percent": r["values"]["percent"],
+        f"{topic}/temperature": r["values"]["temperature"],
+        f"{topic}/meta": r["values"]["_meta"],
+      }
+    else:
+      rendered = None
+
+    return rendered
+
 class Pressure(Sensor):
   SID = Sensor.SID_PRESSURE
   STALE_TIME = 5
@@ -618,6 +703,20 @@ class Pressure(Sensor):
     }
     if delta != None:
       rendered["deltas"] = {"mbar": delta}
+
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render()
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/mbar": r["values"]["mbar"],
+      }
+    else:
+      rendered = None
 
     return rendered
 
@@ -876,6 +975,45 @@ class Location(Sensor):
 
     return rendered
 
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/latitude": r["values"]["latitude"],
+        f"{topic}/longitude": r["values"]["longitude"],
+        f"{topic}/altitude": r["values"]["altitude"],
+        f"{topic}/speed": r["values"]["speed"],
+        f"{topic}/heading": r["values"]["heading"],
+        f"{topic}/accuracy": r["values"]["accuracy"],
+        f"{topic}/updated": r["values"]["updated"],
+        f"{topic}/angle_to_horizon": r["values"]["angle_to_horizon"],
+        f"{topic}/radio_horizon": r["values"]["radio_horizon"]}
+      if "distance" in r:
+        rendered[f"{topic}/distance/euclidian"] = r["distance"]["euclidian"]
+        rendered[f"{topic}/distance/orthodromic"] = r["distance"]["orthodromic"]
+        rendered[f"{topic}/distance/vertical"] = r["distance"]["vertical"]
+      if "azalt" in r:
+        rendered[f"{topic}/azalt/azimuth"] = r["azalt"]["azimuth"]
+        rendered[f"{topic}/azalt/altitude"] = r["azalt"]["altitude"]
+        rendered[f"{topic}/azalt/above_horizon"] = r["azalt"]["above_horizon"]
+        rendered[f"{topic}/azalt/altitude_delta"] = r["azalt"]["altitude_delta"]
+        rendered[f"{topic}/azalt/local_angle_to_horizon"] = r["azalt"]["local_angle_to_horizon"]
+      if "radio_horizon" in r:
+        rendered[f"{topic}/radio_horizon/object_range"] = r["radio_horizon"]["object_range"]
+        rendered[f"{topic}/radio_horizon/related_range"] = r["radio_horizon"]["related_range"]
+        rendered[f"{topic}/radio_horizon/combined_range"] = r["radio_horizon"]["combined_range"]
+        rendered[f"{topic}/radio_horizon/within_range"] = r["radio_horizon"]["within_range"]
+        rendered[f"{topic}/radio_horizon/geodesic_distance"] = r["radio_horizon"]["geodesic_distance"]
+        rendered[f"{topic}/radio_horizon/antenna_distance"] = r["radio_horizon"]["antenna_distance"]
+
+    else:
+      rendered = None
+
+    return rendered
+
 class PhysicalLink(Sensor):
   SID = Sensor.SID_PHYSICAL_LINK
   STALE_TIME = 5
@@ -930,6 +1068,22 @@ class PhysicalLink(Sensor):
       if q > 40: rendered["icon"] = "network-strength-2"
       if q > 75: rendered["icon"] = "network-strength-3"
       if q > 90: rendered["icon"] = "network-strength-4"
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/rssi": r["values"]["rssi"],
+        f"{topic}/snr": r["values"]["snr"],
+        f"{topic}/q": r["values"]["q"],
+      }
+    else:
+      rendered = None
+
     return rendered
 
 class Temperature(Sensor):
@@ -988,6 +1142,20 @@ class Temperature(Sensor):
     }
     return rendered
 
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/c": r["values"]["c"],
+      }
+    else:
+      rendered = None
+
+    return rendered
+
 class Humidity(Sensor):
   SID = Sensor.SID_HUMIDITY
   STALE_TIME = 5
@@ -1042,6 +1210,20 @@ class Humidity(Sensor):
       "name": "Relative Humidity",
       "values": { "percent": self.data["percent_relative"] },
     }
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/percent_relative": r["values"]["percent"],
+      }
+    else:
+      rendered = None
+
     return rendered
 
 class MagneticField(Sensor):
@@ -1099,6 +1281,22 @@ class MagneticField(Sensor):
       "name": "Magnetic Field",
       "values": { "x": self.data["x"], "y": self.data["y"], "z": self.data["z"] },
     }
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/x": r["values"]["x"],
+        f"{topic}/y": r["values"]["y"],
+        f"{topic}/z": r["values"]["z"],
+      }
+    else:
+      rendered = None
+
     return rendered
 
 class AmbientLight(Sensor):
@@ -1167,6 +1365,22 @@ class AmbientLight(Sensor):
 
     return rendered
 
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/lux": r["values"]["lux"],
+      }
+      if "deltas" in r:
+        rendered[f"{topic}/deltas/lux"] = r["deltas"]["lux"]
+    else:
+      rendered = None
+
+    return rendered
+
 class Gravity(Sensor):
   SID = Sensor.SID_GRAVITY
   STALE_TIME = 1
@@ -1222,6 +1436,22 @@ class Gravity(Sensor):
       "name": "Gravity",
       "values": { "x": self.data["x"], "y": self.data["y"], "z": self.data["z"] },
     }
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/x": r["values"]["x"],
+        f"{topic}/y": r["values"]["y"],
+        f"{topic}/z": r["values"]["z"],
+      }
+    else:
+      rendered = None
+
     return rendered
 
 class AngularVelocity(Sensor):
@@ -1281,6 +1511,22 @@ class AngularVelocity(Sensor):
     }
     return rendered
 
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/x": r["values"]["x"],
+        f"{topic}/y": r["values"]["y"],
+        f"{topic}/z": r["values"]["z"],
+      }
+    else:
+      rendered = None
+
+    return rendered
+
 class Acceleration(Sensor):
   SID = Sensor.SID_ACCELERATION
   STALE_TIME = 1
@@ -1326,6 +1572,33 @@ class Acceleration(Sensor):
         return {"x": packed[0], "y": packed[1], "z": packed[2]}
     except:
       return None
+
+  def render(self, relative_to=None):
+    if self.data == None:
+      return None
+    
+    rendered = {
+      "icon": "arrow-right-thick",
+      "name": "Acceleration",
+      "values": { "x": self.data["x"], "y": self.data["y"], "z": self.data["z"] },
+    }
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/x": r["values"]["x"],
+        f"{topic}/y": r["values"]["y"],
+        f"{topic}/z": r["values"]["z"],
+      }
+    else:
+      rendered = None
+
+    return rendered
 
 class Proximity(Sensor):
   SID = Sensor.SID_PROXIMITY
@@ -1381,6 +1654,20 @@ class Proximity(Sensor):
       "name": "Proximity",
       "values": { "triggered": self.data },
     }
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+        f"{topic}/triggered": r["values"]["triggered"],
+      }
+    else:
+      rendered = None
+
     return rendered
 
 class PowerConsumption(Sensor):
@@ -1464,6 +1751,23 @@ class PowerConsumption(Sensor):
 
     return rendered
 
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+      }
+      for consumer in r["values"]:
+        cl = consumer["label"]
+        rendered[f"{topic}/{cl}/w"] = consumer["w"]
+        rendered[f"{topic}/{cl}/icon"] = consumer["custom_icon"]
+    else:
+      rendered = None
+
+    return rendered
+
 class PowerProduction(Sensor):
   SID = Sensor.SID_POWER_PRODUCTION
   STALE_TIME = 5
@@ -1542,6 +1846,23 @@ class PowerProduction(Sensor):
       "name": "Power Production",
       "values": producers,
     }
+
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+      }
+      for producer in r["values"]:
+        pl = producer["label"]
+        rendered[f"{topic}/{pl}/w"] = producer["w"]
+        rendered[f"{topic}/{pl}/icon"] = producer["custom_icon"]
+    else:
+      rendered = None
 
     return rendered
 
@@ -1628,6 +1949,26 @@ class Processor(Sensor):
       "name": "Processor",
       "values": entries,
     }
+
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+      }
+      for cpu in r["values"]:
+        cl = cpu["label"]
+        rendered[f"{topic}/{cl}/current_load"] = cpu["current_load"]
+        rendered[f"{topic}/{cl}/avgs/1m"] = cpu["load_avgs"][0]
+        rendered[f"{topic}/{cl}/avgs/5m"] = cpu["load_avgs"][1]
+        rendered[f"{topic}/{cl}/avgs/15m"] = cpu["load_avgs"][2]
+        rendered[f"{topic}/{cl}/clock"] = cpu["clock"]
+    else:
+      rendered = None
 
     return rendered
 
@@ -1718,6 +2059,25 @@ class RandomAccessMemory(Sensor):
 
     return rendered
 
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+      }
+      for ram in r["values"]:
+        rl = ram["label"]
+        rendered[f"{topic}/{rl}/capacity"] = ram["capacity"]
+        rendered[f"{topic}/{rl}/used"] = ram["used"]
+        rendered[f"{topic}/{rl}/free"] = ram["free"]
+        rendered[f"{topic}/{rl}/percent"] = ram["percent"]
+    else:
+      rendered = None
+
+    return rendered
+
 class NonVolatileMemory(Sensor):
   SID = Sensor.SID_NVM
   STALE_TIME = 5
@@ -1802,6 +2162,25 @@ class NonVolatileMemory(Sensor):
       "name": "Non-Volatile Memory",
       "values": entries,
     }
+
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+      }
+      for nvm in r["values"]:
+        nl = nvm["label"]
+        rendered[f"{topic}/{nl}/capacity"] = nvm["capacity"]
+        rendered[f"{topic}/{nl}/used"] = nvm["used"]
+        rendered[f"{topic}/{nl}/free"] = nvm["free"]
+        rendered[f"{topic}/{nl}/percent"] = nvm["percent"]
+    else:
+      rendered = None
 
     return rendered
 
@@ -1890,6 +2269,22 @@ class Custom(Sensor):
 
     return rendered
 
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+      }
+      for custom in r["values"]:
+        cl = custom["label"]
+        rendered[f"{topic}/{cl}/value"] = custom["value"]
+        rendered[f"{topic}/{cl}/icon"] = custom["custom_icon"]
+    else:
+      rendered = None
+
+    return rendered
 
 class Tank(Sensor):
   SID = Sensor.SID_TANK
@@ -1981,6 +2376,27 @@ class Tank(Sensor):
       "name": "Tank",
       "values": entries,
     }
+
+    return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+      }
+      for tank in r["values"]:
+        tl = tank["label"]
+        rendered[f"{topic}/{tl}/unit"] = tank["unit"]
+        rendered[f"{topic}/{tl}/capacity"] = tank["capacity"]
+        rendered[f"{topic}/{tl}/level"] = tank["level"]
+        rendered[f"{topic}/{tl}/free"] = tank["free"]
+        rendered[f"{topic}/{tl}/percent"] = tank["percent"]
+        rendered[f"{topic}/{tl}/icon"] = tank["custom_icon"]
+    else:
+      rendered = None
 
     return rendered
 
@@ -2076,3 +2492,651 @@ class Fuel(Sensor):
     }
 
     return rendered
+
+  def render_mqtt(self, relative_to=None):
+    if self.data != None:
+      r = self.render(relative_to=relative_to)
+      topic = self.name()
+      rendered = {
+        f"{topic}/name": r["name"],
+        f"{topic}/icon": r["icon"],
+      }
+      for tank in r["values"]:
+        tl = tank["label"]
+        rendered[f"{topic}/{tl}/unit"] = tank["unit"]
+        rendered[f"{topic}/{tl}/capacity"] = tank["capacity"]
+        rendered[f"{topic}/{tl}/level"] = tank["level"]
+        rendered[f"{topic}/{tl}/free"] = tank["free"]
+        rendered[f"{topic}/{tl}/percent"] = tank["percent"]
+        rendered[f"{topic}/{tl}/icon"] = tank["custom_icon"]
+    else:
+      rendered = None
+
+    return rendered
+
+class RNSTransport(Sensor):
+  SID = Sensor.SID_RNS_TRANSPORT
+  STALE_TIME = 60
+
+  def __init__(self):
+    self._last_traffic_rxb = 0
+    self._last_traffic_txb = 0
+    self._last_update = 0
+    self._update_lock = threading.Lock()
+    super().__init__(type(self).SID, type(self).STALE_TIME)
+
+  def setup_sensor(self):
+    self.update_data()
+
+  def teardown_sensor(self):
+    self.identity = None
+    self.data = None
+
+  def update_data(self):
+    with self._update_lock:
+      if time.time() - self._last_update < self.STALE_TIME:
+        return
+
+      r = RNS.Reticulum.get_instance()
+      self._last_update = time.time()
+      ifstats = r.get_interface_stats()
+      rss = None
+      if "rss" in ifstats:
+        rss = ifstats.pop("rss")
+
+      if self.last_update == 0:
+        rxs = ifstats["rxs"]
+        txs = ifstats["txs"]
+      else:
+        td  = time.time()-self.last_update
+        rxd = ifstats["rxb"] - self._last_traffic_rxb
+        txd = ifstats["txb"] - self._last_traffic_txb
+        rxs = (rxd/td)*8
+        txs = (txd/td)*8
+
+      self._last_traffic_rxb = ifstats["rxb"]
+      self._last_traffic_txb = ifstats["txb"]
+
+      transport_enabled = False
+      transport_uptime = 0
+      if "transport_uptime" in ifstats:
+        transport_enabled = True
+        transport_uptime = ifstats["transport_uptime"]
+
+      self.data = {
+        "transport_enabled": transport_enabled,
+        "transport_identity": RNS.Transport.identity.hash,
+        "transport_uptime": transport_uptime,
+        "traffic_rxb": ifstats["rxb"],
+        "traffic_txb": ifstats["txb"],
+        "speed_rx": rxs,
+        "speed_tx": txs,
+        "speed_rx_inst": ifstats["rxs"],
+        "speed_tx_inst": ifstats["txs"],
+        "memory_used": rss,
+        "ifstats": ifstats,
+        "interface_count": len(ifstats["interfaces"]),
+        "link_count": r.get_link_count(),
+        "path_table": sorted(r.get_path_table(max_hops=RNS.Transport.PATHFINDER_M-1), key=lambda e: (e["interface"], e["hops"]) )
+      }
+
+  def pack(self):
+    d = self.data
+    if d == None:
+      return None
+    else:
+      packed = self.data
+      return packed
+
+  def unpack(self, packed):
+    try:
+      if packed == None:
+        return None
+      else:
+        return packed
+        
+    except:
+      return None
+
+  def render(self, relative_to=None):
+    if self.data == None:
+      return None
+    
+    try:
+      d = self.data
+      ifs = {}
+      transport_nodes = {}
+      for ife in d["ifstats"]["interfaces"]:
+        ifi = ife.copy()
+        ifi["paths"] = {}
+        ifi["path_count"] = 0
+        ifs[ifi.pop("name")] = ifi
+
+      for path in d["path_table"]:
+        pifn = path["interface"]
+        if pifn in ifs:
+          pif = ifs[pifn]
+          via = path["via"]
+          if not via in transport_nodes:
+            transport_nodes[via] = {"on_interface": pifn}
+          if not via in pif["paths"]:
+            pif["paths"][via] = {}
+          p = path.copy()
+          p.pop("via")
+          pif["paths"][via][p.pop("hash")] = p
+          pif["path_count"] += 1
+
+
+      values = {
+        "transport_enabled": d["transport_enabled"],
+        "transport_identity": d["transport_identity"],
+        "transport_uptime": d["transport_uptime"],
+        "traffic_rxb": d["traffic_rxb"],
+        "traffic_txb": d["traffic_txb"],
+        "speed_rx": d["speed_rx"],
+        "speed_tx": d["speed_tx"],
+        "speed_rx_inst": d["speed_rx_inst"],
+        "speed_tx_inst": d["speed_tx_inst"],
+        "memory_used": d["memory_used"],
+        "path_count": len(d["path_table"]),
+        "link_count": d["link_count"],
+        "interface_count": len(ifs),
+        "interfaces": ifs,
+        "remote_transport_node_count": len(transport_nodes),
+        "remote_transport_nodes": transport_nodes,
+        "path_table": d["path_table"],
+      }
+
+      rendered = {
+        "icon": "transit-connection-variant",
+        "name": "Reticulum Transport",
+        "values": values,
+      }
+
+      return rendered
+
+    except Exception as e:
+      RNS.log(f"Could not render RNS Transport telemetry data. The contained exception was: {e}", RNS.LOG_ERROR)
+      RNS.trace_exception(e)
+
+    return None
+
+  def render_mqtt(self, relative_to=None):
+    try:
+      if self.data != None:
+        r = self.render(relative_to=relative_to)
+        v = r["values"]
+        tid = mqtt_desthash(v["transport_identity"])
+        topic = f"{self.name()}/{tid}"
+        rendered = {
+          f"{topic}/name": r["name"],
+          f"{topic}/icon": r["icon"],
+          f"{topic}/transport_enabled": v["transport_enabled"],
+          f"{topic}/transport_identity": mqtt_desthash(v["transport_identity"]),
+          f"{topic}/transport_uptime": v["transport_uptime"],
+          f"{topic}/traffic_rxb": v["traffic_rxb"],
+          f"{topic}/traffic_txb": v["traffic_txb"],
+          f"{topic}/speed_rx": v["speed_rx"],
+          f"{topic}/speed_tx": v["speed_tx"],
+          f"{topic}/speed_rx_inst": v["speed_rx_inst"],
+          f"{topic}/speed_tx_inst": v["speed_tx_inst"],
+          f"{topic}/memory_used": v["memory_used"],
+          f"{topic}/path_count": v["path_count"],
+          f"{topic}/link_count": v["link_count"],
+          f"{topic}/interface_count": v["interface_count"],
+          f"{topic}/remote_transport_node_count": v["remote_transport_node_count"],
+        }
+
+        for if_name in v["interfaces"]:
+          i = v["interfaces"][if_name]
+          im = "unknown"
+          if i["mode"] == RNS.Interfaces.Interface.Interface.MODE_FULL:
+            im = "full"
+          elif i["mode"] == RNS.Interfaces.Interface.Interface.MODE_POINT_TO_POINT:
+            im = "point_to_point"
+          elif i["mode"] == RNS.Interfaces.Interface.Interface.MODE_ACCESS_POINT:
+            im = "access_point"
+          elif i["mode"] == RNS.Interfaces.Interface.Interface.MODE_ROAMING:
+            im = "roaming"
+          elif i["mode"] == RNS.Interfaces.Interface.Interface.MODE_BOUNDARY:
+            im = "boundary"
+          elif i["mode"] == RNS.Interfaces.Interface.Interface.MODE_GATEWAY:
+            im = "gateway"
+
+          mif_name = mqtt_hash(i["hash"])
+          rendered[f"{topic}/interfaces/{mif_name}/name"] = if_name
+          rendered[f"{topic}/interfaces/{mif_name}/short_name"] = i["short_name"]
+          rendered[f"{topic}/interfaces/{mif_name}/up"] = i["status"]
+          rendered[f"{topic}/interfaces/{mif_name}/mode"] = im
+          rendered[f"{topic}/interfaces/{mif_name}/type"] = i["type"]
+          rendered[f"{topic}/interfaces/{mif_name}/bitrate"] = i["bitrate"]
+          rendered[f"{topic}/interfaces/{mif_name}/rxs"] = i["rxs"]
+          rendered[f"{topic}/interfaces/{mif_name}/txs"] = i["txs"]
+          rendered[f"{topic}/interfaces/{mif_name}/rxb"] = i["rxb"]
+          rendered[f"{topic}/interfaces/{mif_name}/txb"] = i["txb"]
+          rendered[f"{topic}/interfaces/{mif_name}/ifac_signature"] = mqtt_hash(i["ifac_signature"])
+          rendered[f"{topic}/interfaces/{mif_name}/ifac_size"] = i["ifac_size"]
+          rendered[f"{topic}/interfaces/{mif_name}/ifac_netname"] = i["ifac_netname"]
+          rendered[f"{topic}/interfaces/{mif_name}/incoming_announce_frequency"] = i["incoming_announce_frequency"]
+          rendered[f"{topic}/interfaces/{mif_name}/outgoing_announce_frequency"] = i["outgoing_announce_frequency"]
+          rendered[f"{topic}/interfaces/{mif_name}/held_announces"] = i["held_announces"]
+          rendered[f"{topic}/interfaces/{mif_name}/path_count"] = i["path_count"]
+          
+          for via in i["paths"]:
+            vh = mqtt_desthash(via)
+
+            for desthash in i["paths"][via]:
+              dh = mqtt_desthash(desthash)
+              d = i["paths"][via][desthash]
+              lp = f"{topic}/interfaces/{mif_name}/paths/{vh}/{dh}"  
+              rendered[f"{lp}/hops"] = d["hops"]
+              rendered[f"{lp}/timestamp"] = d["timestamp"]
+              rendered[f"{lp}/expires"] = d["expires"]
+              rendered[f"{lp}/interface"] = d["interface"]
+
+      else:
+        rendered = None
+
+      return rendered
+
+    except Exception as e:
+      RNS.log(f"Could not render RNS Transport telemetry data to MQTT format. The contained exception was: {e}", RNS.LOG_ERROR)
+
+    return None
+
+class LXMFPropagation(Sensor):
+  SID = Sensor.SID_LXMF_PROPAGATION
+  STALE_TIME = 300
+
+  def __init__(self):
+    self.identity = None
+    self.lxmd = None
+    self._last_update = 0
+    self._update_interval = 18
+    self._update_lock = threading.Lock()
+    self._running = False
+    super().__init__(type(self).SID, type(self).STALE_TIME)
+
+  def set_identity(self, identity):
+    if type(identity) == RNS.Identity:
+      self.identity = identity
+    else:
+      file_path = os.path.expanduser(identity)
+      if os.path.isfile(file_path):
+        try:
+          self.identity = RNS.Identity.from_file(file_path)
+        except Exception as e:
+          RNS.log("Could not load LXMF propagation sensor identity from \"{file_path}\"", RNS.LOG_ERROR)
+
+    if self.identity != None:
+      self.setup_sensor()
+    else:
+      RNS.log(f"Identity was not configured for {self}. Updates will not occur until a valid identity is configured.", RNS.LOG_ERROR)
+
+  def _update_job(self):
+    while self._running:
+      self._update_data()
+      time.sleep(self._update_interval)
+
+  def _start_update_job(self):
+    if not self._running:
+      self._running = True
+      update_thread = threading.Thread(target=self._update_job, daemon=True)
+      update_thread.start()
+
+  def setup_sensor(self):
+    self.update_data()
+
+  def teardown_sensor(self):
+    self._running = False
+    self.identity = None
+    self.data = None
+
+  def update_data(self):
+    # This sensor runs the actual data updates
+    # in the background. An update_data request
+    # will simply start the update job if it is
+    # not already running.
+    if not self._running:
+      RNS.log(self)
+      self._start_update_job()
+
+  def _update_data(self):
+    if not self.synthesized:
+      with self._update_lock:
+        if time.time() - self._last_update < self.STALE_TIME:
+          return
+
+        if self.identity != None:
+          if self.lxmd == None:
+            import LXMF.LXMPeer as LXMPeer
+            import LXMF.Utilities.lxmd as lxmd
+            self.ERROR_NO_IDENTITY = LXMPeer.LXMPeer.ERROR_NO_IDENTITY
+            self.ERROR_NO_ACCESS = LXMPeer.LXMPeer.ERROR_NO_ACCESS
+            self.ERROR_TIMEOUT = LXMPeer.LXMPeer.ERROR_TIMEOUT
+            self.lxmd = lxmd
+
+          self._last_update = time.time()
+          status_response = self.lxmd.query_status(identity=self.identity)
+          if status_response == None:
+            RNS.log("Status response from lxmd was received, but contained no data", RNS.LOG_ERROR)
+          elif status_response == self.ERROR_NO_IDENTITY:
+            RNS.log("Updating telemetry from lxmd failed due to missing identification", RNS.LOG_ERROR)
+          elif status_response == self.ERROR_NO_ACCESS:
+            RNS.log("Access was denied while attempting to update lxmd telemetry", RNS.LOG_ERROR)
+          elif status_response == self.ERROR_TIMEOUT:
+            RNS.log("Updating telemetry from lxmd failed due to timeout", RNS.LOG_ERROR)
+          else:
+            self.data = status_response
+
+  def pack(self):
+    d = self.data
+    if d == None:
+      return None
+    else:
+      packed = self.data
+      return packed
+
+  def unpack(self, packed):
+    try:
+      if packed == None:
+        return None
+      else:
+        return packed
+        
+    except:
+      return None
+
+  def render(self, relative_to=None):
+    if self.data == None:
+      return None
+
+    try:
+      d = self.data
+      values = {
+        "destination_hash": d["destination_hash"],
+        "identity_hash": d["identity_hash"],
+        "uptime": d["uptime"],
+        "delivery_limit": d["delivery_limit"]*1000,
+        "propagation_limit": d["propagation_limit"]*1000,
+        "autopeer_maxdepth": d["autopeer_maxdepth"],
+        "from_static_only": d["from_static_only"],
+        "messagestore_count": d["messagestore"]["count"],
+        "messagestore_bytes": d["messagestore"]["bytes"],
+        "messagestore_free": d["messagestore"]["limit"]-d["messagestore"]["bytes"],
+        "messagestore_limit": d["messagestore"]["limit"],
+        "messagestore_pct": round(min( (d["messagestore"]["bytes"]/d["messagestore"]["limit"])*100, 100.0), 2),
+        "client_propagation_messages_received": d["clients"]["client_propagation_messages_received"],
+        "client_propagation_messages_served": d["clients"]["client_propagation_messages_served"],
+        "unpeered_propagation_incoming": d["unpeered_propagation_incoming"],
+        "unpeered_propagation_rx_bytes": d["unpeered_propagation_rx_bytes"],
+        "static_peers": d["static_peers"],
+        "total_peers": d["total_peers"],
+        "max_peers": d["max_peers"],
+        "peers": {}
+      }
+
+      active_peers = 0
+      for peer_id in d["peers"]:
+        p = d["peers"][peer_id]
+        if p["alive"] == True:
+          active_peers += 1
+        values["peers"][peer_id] = {
+          "type": p["type"],
+          "state": p["state"],
+          "alive": p["alive"],
+          "last_heard": p["last_heard"],
+          "next_sync_attempt": p["next_sync_attempt"],
+          "last_sync_attempt": p["last_sync_attempt"],
+          "sync_backoff": p["sync_backoff"],
+          "peering_timebase": p["peering_timebase"],
+          "ler": p["ler"],
+          "str": p["str"],
+          "transfer_limit": p["transfer_limit"],
+          "network_distance": p["network_distance"],
+          "rx_bytes": p["rx_bytes"],
+          "tx_bytes": p["tx_bytes"],
+          "messages_offered": p["messages"]["offered"],
+          "messages_outgoing": p["messages"]["outgoing"],
+          "messages_incoming": p["messages"]["incoming"],
+          "messages_unhandled": p["messages"]["unhandled"],
+        }
+
+      values["active_peers"] = active_peers
+      values["unreachable_peers"] = values["total_peers"] - active_peers
+
+      rendered = {
+        "icon": "email-fast-outline",
+        "name": "LXMF Propagation",
+        "values": values,
+      }
+
+      return rendered
+
+    except Exception as e:
+      RNS.log(f"Could not render lxmd telemetry data. The contained exception was: {e}", RNS.LOG_ERROR)
+
+    return None
+
+  def render_mqtt(self, relative_to=None):
+    try:
+      if self.data != None:
+        r = self.render(relative_to=relative_to)
+        v = r["values"]
+        nid = mqtt_desthash(v["destination_hash"])
+        topic = f"{self.name()}/{nid}"
+        rendered = {
+          f"{topic}/name": r["name"],
+          f"{topic}/icon": r["icon"],
+          f"{topic}/identity_hash": mqtt_desthash(v["identity_hash"]),
+          f"{topic}/uptime": v["uptime"],
+          f"{topic}/delivery_limit": v["delivery_limit"],
+          f"{topic}/propagation_limit": v["propagation_limit"],
+          f"{topic}/autopeer_maxdepth": v["autopeer_maxdepth"],
+          f"{topic}/from_static_only": v["from_static_only"],
+          f"{topic}/messagestore_count": v["messagestore_count"],
+          f"{topic}/messagestore_bytes": v["messagestore_bytes"],
+          f"{topic}/messagestore_free": v["messagestore_free"],
+          f"{topic}/messagestore_limit": v["messagestore_limit"],
+          f"{topic}/messagestore_pct": v["messagestore_pct"],
+          f"{topic}/client_propagation_messages_received": v["client_propagation_messages_received"],
+          f"{topic}/client_propagation_messages_served": v["client_propagation_messages_served"],
+          f"{topic}/unpeered_propagation_incoming": v["unpeered_propagation_incoming"],
+          f"{topic}/unpeered_propagation_rx_bytes": v["unpeered_propagation_rx_bytes"],
+          f"{topic}/static_peers": v["static_peers"],
+          f"{topic}/total_peers": v["total_peers"],
+          f"{topic}/active_peers": v["active_peers"],
+          f"{topic}/unreachable_peers": v["unreachable_peers"],
+          f"{topic}/max_peers": v["max_peers"],
+        }
+
+        peered_rx_bytes = 0
+        peered_tx_bytes = 0
+        peered_offered = 0
+        peered_outgoing = 0
+        peered_incoming = 0
+        peered_unhandled = 0
+        peered_max_unhandled = 0
+        for peer_id in v["peers"]:
+          p = v["peers"][peer_id]
+          pid = mqtt_desthash(peer_id)
+          peer_rx_bytes = p["rx_bytes"]; peered_rx_bytes += peer_rx_bytes
+          peer_tx_bytes = p["tx_bytes"]; peered_tx_bytes += peer_tx_bytes
+          peer_messages_offered = p["messages_offered"]; peered_offered += peer_messages_offered
+          peer_messages_outgoing = p["messages_outgoing"]; peered_outgoing += peer_messages_outgoing
+          peer_messages_incoming = p["messages_incoming"]; peered_incoming += peer_messages_incoming
+          peer_messages_unhandled = p["messages_unhandled"]; peered_unhandled += peer_messages_unhandled
+          peered_max_unhandled = max(peered_max_unhandled, peer_messages_unhandled)
+          rendered[f"{topic}/peers/{pid}/type"] = p["type"]
+          rendered[f"{topic}/peers/{pid}/state"] = p["state"]
+          rendered[f"{topic}/peers/{pid}/alive"] = p["alive"]
+          rendered[f"{topic}/peers/{pid}/last_heard"] = p["last_heard"]
+          rendered[f"{topic}/peers/{pid}/next_sync_attempt"] = p["next_sync_attempt"]
+          rendered[f"{topic}/peers/{pid}/last_sync_attempt"] = p["last_sync_attempt"]
+          rendered[f"{topic}/peers/{pid}/sync_backoff"] = p["sync_backoff"]
+          rendered[f"{topic}/peers/{pid}/peering_timebase"] = p["peering_timebase"]
+          rendered[f"{topic}/peers/{pid}/ler"] = p["ler"]
+          rendered[f"{topic}/peers/{pid}/str"] = p["str"]
+          rendered[f"{topic}/peers/{pid}/transfer_limit"] = p["transfer_limit"]
+          rendered[f"{topic}/peers/{pid}/network_distance"] = p["network_distance"]
+          rendered[f"{topic}/peers/{pid}/rx_bytes"] = peer_rx_bytes
+          rendered[f"{topic}/peers/{pid}/tx_bytes"] = peer_tx_bytes
+          rendered[f"{topic}/peers/{pid}/messages_offered"] = peer_messages_offered
+          rendered[f"{topic}/peers/{pid}/messages_outgoing"] = peer_messages_outgoing
+          rendered[f"{topic}/peers/{pid}/messages_incoming"] = peer_messages_incoming
+          rendered[f"{topic}/peers/{pid}/messages_unhandled"] = peer_messages_unhandled
+
+        rendered[f"{topic}/peered_propagation_rx_bytes"] = peered_rx_bytes
+        rendered[f"{topic}/peered_propagation_tx_bytes"] = peered_tx_bytes
+        rendered[f"{topic}/peered_propagation_offered"] = peered_offered
+        rendered[f"{topic}/peered_propagation_outgoing"] = peered_outgoing
+        rendered[f"{topic}/peered_propagation_incoming"] = peered_incoming
+        rendered[f"{topic}/peered_propagation_unhandled"] = peered_unhandled
+        rendered[f"{topic}/peered_propagation_max_unhandled"] = peered_max_unhandled
+      
+      else:
+        rendered = None
+
+      return rendered
+
+    except Exception as e:
+      RNS.log(f"Could not render lxmd telemetry data to MQTT format. The contained exception was: {e}", RNS.LOG_ERROR)
+      RNS.trace_exception(e)
+
+    return None
+
+class ConnectionMap(Sensor):
+  SID = Sensor.SID_CONNECTION_MAP
+  STALE_TIME = 60
+  DEFAULT_MAP_NAME = 0x00
+
+  def __init__(self):
+    self.maps = {}
+    super().__init__(type(self).SID, type(self).STALE_TIME)
+
+  def setup_sensor(self):
+    self.update_data()
+
+  def teardown_sensor(self):
+    self.data = None
+
+  def ensure_map(self, map_name):
+    if map_name == None:
+      map_name = self.DEFAULT_MAP_NAME
+
+    if not map_name in self.maps:
+      self.maps[map_name] = {
+        "name": map_name,
+        "points": {},
+      }
+
+    return self.maps[map_name]
+
+  def add_point(self, lat, lon, altitude=None, type_label=None, name=None, map_name=None,
+                signal_rssi=None, signal_snr=None, signal_q=None, hash_on_name_and_type_only=False):
+
+    p = {
+      "latitude": lat,
+      "longitude": lon,
+      "altitude": altitude,
+      "type_label": type_label,
+      "name": name}
+
+    if not hash_on_name_and_type_only:
+      p_hash = RNS.Identity.truncated_hash(umsgpack.packb(p))
+    else:
+      p_hash = RNS.Identity.truncated_hash(umsgpack.packb({"type_label": type_label, "name": name}))
+
+    p["signal"] = {"rssi": signal_rssi, "snr": signal_snr, "q": signal_q}
+    self.ensure_map(map_name)["points"][p_hash] = p
+
+  def update_data(self):
+    self.data = {
+      "maps": self.maps,
+    }
+
+  def pack(self):
+    d = self.data
+    if d == None:
+      return None
+    else:
+      packed = self.data
+      return packed
+
+  def unpack(self, packed):
+    try:
+      if packed == None:
+        return None
+      else:
+        return packed
+        
+    except:
+      return None
+
+  def render(self, relative_to=None):
+    if self.data == None:
+      return None
+    
+    try:
+      rendered = {
+        "icon": "map-check-outline",
+        "name": "Connection Map",
+        "values": {"maps": self.data["maps"]},
+      }
+
+      return rendered
+
+    except Exception as e:
+      RNS.log(f"Could not render connection map telemetry data. The contained exception was: {e}", RNS.LOG_ERROR)
+      RNS.trace_exception(e)
+
+    return None
+
+  def render_mqtt(self, relative_to=None):
+    try:
+      if self.data != None:
+        r = self.render(relative_to=relative_to)
+        v = r["values"]
+        topic = f"{self.name()}"
+        rendered = {
+          f"{topic}/name": r["name"],
+          f"{topic}/icon": r["icon"],
+        }
+
+        for map_name in v["maps"]:
+          m = v["maps"][map_name]
+          if map_name == self.DEFAULT_MAP_NAME:
+            map_name = "default"
+          for ph in m["points"]:
+            pid = mqtt_hash(ph)
+            p = m["points"][ph]
+            tl = p["type_label"]
+            n = p["name"]
+            rendered[f"{topic}/maps/{map_name}/points/{tl}/{n}/{pid}/lat"] = p["latitude"]
+            rendered[f"{topic}/maps/{map_name}/points/{tl}/{n}/{pid}/lon"] = p["longitude"]
+            rendered[f"{topic}/maps/{map_name}/points/{tl}/{n}/{pid}/alt"] = p["altitude"]
+            rendered[f"{topic}/maps/{map_name}/points/{tl}/{n}/{pid}/rssi"] = p["signal"]["rssi"]
+            rendered[f"{topic}/maps/{map_name}/points/{tl}/{n}/{pid}/snr"] = p["signal"]["snr"]
+            rendered[f"{topic}/maps/{map_name}/points/{tl}/{n}/{pid}/q"] = p["signal"]["q"]
+          
+      else:
+        rendered = None
+
+      return rendered
+
+    except Exception as e:
+      RNS.log(f"Could not render conection map telemetry data to MQTT format. The contained exception was: {e}", RNS.LOG_ERROR)
+
+    return None
+
+def mqtt_desthash(desthash):
+  if type(desthash) == bytes:
+    return RNS.hexrep(desthash, delimit=False)
+  else:
+    return None
+
+def mqtt_hash(ihash):
+  if type(ihash) == bytes:
+    return RNS.hexrep(ihash, delimit=False)
+  else:
+    return None
