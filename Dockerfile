@@ -26,6 +26,8 @@ WORKDIR ".."
 
 # Fetch files required for sideband local repository
 
+RUN git clone https://github.com/liamcottle/rnode-flasher.git
+
 RUN mkdir dist_archive 
 
 WORKDIR "dist_archive" 

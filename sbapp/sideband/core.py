@@ -3762,43 +3762,36 @@ class SidebandCore():
                 else:
                     sec_atl_long = self.config["hw_rnode_sec_atl_long"]
 
-                subint_config = [[0]*11 for i in range(2)]
-
-                # Primary modem
-                subint_config[0][0] = "Primary modem" # Name of interface
-                subint_config[0][1] = 0 # Virtual port
-                subint_config[0][2] = self.config["hw_rnode_frequency"]
-                subint_config[0][3] = self.config["hw_rnode_bandwidth"]
-                subint_config[0][4] = self.config["hw_rnode_tx_power"]
-                subint_config[0][5] = self.config["hw_rnode_spreading_factor"]
-                subint_config[0][6] = self.config["hw_rnode_coding_rate"]
-                subint_config[0][7] = False # flow control hardcoded to false for now
-                subint_config[0][8] = atl_short 
-                subint_config[0][9] = atl_long 
-                subint_config[0][10] = True # outgoing
-
-                # Secondary modem
-                subint_config[1][0] = "Secondary modem" # Name of interface
-                subint_config[1][1] = 1 # Virtual port
-                subint_config[1][2] = self.config["hw_rnode_sec_frequency"]
-                subint_config[1][3] = self.config["hw_rnode_sec_bandwidth"]
-                subint_config[1][4] = self.config["hw_rnode_sec_tx_power"]
-                subint_config[1][5] = self.config["hw_rnode_sec_spreading_factor"]
-                subint_config[1][6] = self.config["hw_rnode_coding_rate"]
-                subint_config[1][7] = False # flow control hardcoded to false for now
-                subint_config[0][8] = sec_atl_short
-                subint_config[0][9] = sec_atl_long
-                subint_config[1][10] = True # outgoing
-
                 interface_config = {
                     "name": "RNodeMultiInterface",
                     "port": target_port,
-                    "subint_config": subint_config,
+                    "Primary modem": {
+                        "interface_enabled": True,
+                        "frequency": self.config["hw_rnode_frequency"],
+                        "vport": 0,
+                        "bandwidth": self.config["hw_rnode_bandwidth"],
+                        "txpower": self.config["hw_rnode_tx_power"],
+                        "spreadingfactor": self.config["hw_rnode_spreading_factor"],
+                        "codingrate": self.config["hw_rnode_coding_rate"],
+                        "flow_control": False,
+                        "airtime_limit_long": atl_long,
+                        "airtime_limit_short": atl_short
+                        },
+                    "Secondary modem": {
+                        "interface_enabled": True,
+                        "frequency": self.config["hw_rnode_sec_frequency"],
+                        "vport": 1,
+                        "bandwidth": self.config["hw_rnode_sec_bandwidth"],
+                        "txpower": self.config["hw_rnode_sec_tx_power"],
+                        "spreadingfactor": self.config["hw_rnode_sec_spreading_factor"],
+                        "codingrate": self.config["hw_rnode_sec_coding_rate"],
+                        "flow_control": False,
+                        "airtime_limit_long": sec_atl_long,
+                        "airtime_limit_short": sec_atl_short
+                        },
                     "flow_control": False,
                     "id_interval": self.config["hw_rnode_beaconinterval"],
                     "id_callsign": self.config["hw_rnode_beacondata"],
-                    "st_alock": atl_short,
-                    "lt_alock": atl_long,
                     "allow_bluetooth": False,
                     "target_device_name": None,
                     "force_ble": True,
