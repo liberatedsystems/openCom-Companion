@@ -4746,11 +4746,7 @@ class SidebandApp(MDApp):
             valid = False
         
         try:
-<<<<<<< HEAD
-            valid_vals = [7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 203.125, 250, 406.25, 500, 812.5, 1625]
-=======
             valid_vals = [7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, 500, 203.125, 406.25, 812.5, 1625]
->>>>>>> upstream/main
             val = float(self.hardware_rnode_screen.ids.hardware_rnode_bandwidth.text)
             if not val in valid_vals:
                 raise ValueError("Invalid bandwidth")
@@ -5437,11 +5433,7 @@ class SidebandApp(MDApp):
             self.bind_clipboard_actions(self.keys_screen.ids)
 
             self.keys_screen.ids.keys_scrollview.effect_cls = ScrollEffect
-<<<<<<< HEAD
             info = "Your primary encryption keys are stored in a Reticulum Identity within the openCom Companion app. If you want to backup this Identity for later use on this or another device, you can export it as a plain text blob, with the key data encoded in Base32 format. This will allow you to restore your address in openCom Companion or other LXMF clients at a later point.\n\n[b]Warning![/b] Anyone that gets access to the key data will be able to control your LXMF address, impersonate you, and read your messages. In is [b]extremely important[/b] that you keep the Identity data secure if you export it.\n\nBefore displaying or exporting your Identity data, make sure that no machine or person in your vicinity is able to see, copy or record your device screen or similar."
-=======
-            info = "Your primary encryption keys are stored in a Reticulum Identity within the Sideband app. If you want to backup this Identity for later use on this or another device, you can export it as a plain text blob, with the key data encoded in Base32 format. This will allow you to restore your address in Sideband or other LXMF clients at a later point.\n\n[b]Warning![/b] Anyone that gets access to the key data will be able to control your LXMF address, impersonate you, and read your messages. It is [b]extremely important[/b] that you keep the Identity data secure if you export it.\n\nBefore displaying or exporting your Identity data, make sure that no machine or person in your vicinity is able to see, copy or record your device screen or similar."
->>>>>>> upstream/main
 
             if not RNS.vendor.platformutils.get_platform() == "android":
                 self.widget_hide(self.keys_screen.ids.keys_share)
