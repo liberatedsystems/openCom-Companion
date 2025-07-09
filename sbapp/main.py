@@ -1,6 +1,6 @@
 __debug_build__ = False
 __disable_shaders__ = False
-__version__ = "1.4.0"
+__version__ = "1.6.1"
 __variant__ = ""
 
 import sys
@@ -8,7 +8,9 @@ import argparse
 parser = argparse.ArgumentParser(description="openCom Companion LXMF Client")
 parser.add_argument("-v", "--verbose", action='store_true', default=False, help="increase logging verbosity")
 parser.add_argument("-c", "--config", action='store', default=None, help="specify path of config directory")
+parser.add_argument("-r", "--rnsconfig", action='store', default=None, help="specify path of RNS config directory")
 parser.add_argument("-d", "--daemon", action='store_true', default=False, help="run as a daemon, without user interface")
+parser.add_argument("-i", "--interactive", action='store_true', default=False, help="connect interactive console after daemon init")
 parser.add_argument("--export-settings", action='store', default=None, help="export application settings to file")
 parser.add_argument("--import-settings", action='store', default=None, help="import application settings from file")
 parser.add_argument("--version", action="version", version="sideband {version}".format(version=__version__))
@@ -25,8 +27,8 @@ import base64
 import threading
 import RNS.vendor.umsgpack as msgpack
 
-WINDOW_DEFAULT_WIDTH  = "494"
-WINDOW_DEFAULT_HEIGHT = "800"
+WINDOW_DEFAULT_WIDTH  = 494
+WINDOW_DEFAULT_HEIGHT = 800
 
 app_ui_scaling_path = None
 def apply_ui_scale():
@@ -176,9 +178,25 @@ if not args.daemon:
         sys.path.append(local)
 
     if not RNS.vendor.platformutils.is_android():
+        model = None
+        max_width = WINDOW_DEFAULT_WIDTH
+        max_height = WINDOW_DEFAULT_HEIGHT
+
+        try:
+            if os.path.isfile("/sys/firmware/devicetree/base/model"):
+                with open("/sys/firmware/devicetree/base/model", "r") as mf:
+                    model = mf.read()
+        except: pass
+
+        if model:
+            if model.startswith("Raspberry Pi "): max_height = 625
+
+        window_width = min(WINDOW_DEFAULT_WIDTH, max_width)
+        window_height = min(WINDOW_DEFAULT_HEIGHT, max_height)
+
         from kivy.config import Config
-        Config.set("graphics", "width", WINDOW_DEFAULT_WIDTH)
-        Config.set("graphics", "height", WINDOW_DEFAULT_HEIGHT)
+        Config.set("graphics", "width", str(window_width))
+        Config.set("graphics", "height", str(window_height))
 
 if args.daemon:
     from .sideband.core import SidebandCore
@@ -239,6 +257,7 @@ else:
         from ui.conversations import Conversations, MsgSync, NewConv
         from ui.telemetry import Telemetry
         from ui.utilities import Utilities
+        from ui.voice import Voice
         from ui.objectdetails import ObjectDetails
         from ui.announces import Announces
         from ui.messages import Messages, ts_format, messages_screen_kv
@@ -267,6 +286,7 @@ else:
         from .ui.announces import Announces
         from .ui.telemetry import Telemetry
         from .ui.utilities import Utilities
+        from .ui.voice import Voice
         from .ui.objectdetails import ObjectDetails
         from .ui.messages import Messages, ts_format, messages_screen_kv
         from .ui.helpers import ContentNavigationDrawer, DrawerList, IconListItem
@@ -327,7 +347,7 @@ class SidebandApp(MDApp):
         if RNS.vendor.platformutils.get_platform() == "android":
             self.sideband = SidebandCore(self, config_path=self.config_path, is_client=True, android_app_dir=self.app_dir, verbose=__debug_build__)
         else:
-            self.sideband = SidebandCore(self, config_path=self.config_path, is_client=False, verbose=(args.verbose or __debug_build__))
+            self.sideband = SidebandCore(self, config_path=self.config_path, is_client=False, verbose=(args.verbose or __debug_build__),rns_config_path=args.rnsconfig)
 
         self.sideband.version_str = "v"+__version__+" "+__variant__
 
@@ -352,6 +372,7 @@ class SidebandApp(MDApp):
         self.settings_ready = False
         self.telemetry_ready = False
         self.utilities_ready = False
+        self.voice_ready = False
         self.connectivity_ready = False
         self.hardware_ready = False
         self.repository_ready = False
@@ -1093,6 +1114,10 @@ class SidebandApp(MDApp):
                         self.hw_error_dialog.open()
                         self.hw_error_dialog.is_open = True
 
+            incoming_call = self.sideband.getstate("voice.incoming_call")
+            if incoming_call:
+                self.sideband.setstate("voice.incoming_call", None)
+                toast(f"Call from {incoming_call}", duration=7)
 
         if self.root.ids.screen_manager.current == "messages_screen":
             self.messages_view.update()
@@ -1266,13 +1291,13 @@ class SidebandApp(MDApp):
                             self.messages_view.ids.message_text.write_tab = True
                         Clock.schedule_once(tab_job, 0.15)
 
-                elif self.rec_dialog != None and self.rec_dialog_is_open:
+                elif len(modifiers) == 0 and self.rec_dialog != None and self.rec_dialog_is_open:
                         if text == " ":
                             self.msg_rec_a_rec(None)
                         elif keycode == 40:
                             self.msg_rec_a_save(None)
 
-                elif not self.rec_dialog_is_open and not self.messages_view.ids.message_text.focus and self.messages_view.ptt_enabled and keycode == 44:
+                elif len(modifiers) == 0 and not self.rec_dialog_is_open and not self.messages_view.ids.message_text.focus and self.messages_view.ptt_enabled and keycode == 44:
                     if not self.key_ptt_down:
                         self.key_ptt_down = True
                         self.message_ptt_down_action()
@@ -1367,6 +1392,15 @@ class SidebandApp(MDApp):
                     if text == "o":
                         self.objects_action()
 
+                    if text == "e":
+                        self.voice_action()
+
+                    if text == " ":
+                        self.voice_answer_action()
+
+                    if text == ".":
+                        self.voice_reject_action()
+
                     if text == "r":
                         if self.root.ids.screen_manager.current == "conversations_screen":
                             if self.include_objects:
@@ -1425,6 +1459,8 @@ class SidebandApp(MDApp):
                         self.close_sub_utilities_action()
                     elif self.root.ids.screen_manager.current == "logviewer_screen":
                         self.close_sub_utilities_action()
+                    elif self.root.ids.screen_manager.current == "voice_settings_screen":
+                        self.close_sub_voice_action()
                     else:
                         self.open_conversations(direction="right")
 
@@ -1502,6 +1538,7 @@ class SidebandApp(MDApp):
 
     def announce_now_action(self, sender=None):
         self.sideband.lxmf_announce()
+        if self.sideband.telephone: self.sideband.telephone.announce()
 
         yes_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
 
@@ -1594,13 +1631,17 @@ class SidebandApp(MDApp):
                 self.conversation_action(item)
 
     def conversation_action(self, sender):
-        context_dest = sender.sb_uid
-        def cb(dt):
-            self.open_conversation(context_dest)
-        def cbu(dt):
-            self.conversations_view.update()
-        Clock.schedule_once(cb, 0.15)
-        Clock.schedule_once(cbu, 0.15+0.25)
+        if sender.conv_type == self.sideband.CONV_P2P:
+            context_dest = sender.sb_uid
+            def cb(dt): self.open_conversation(context_dest)
+            def cbu(dt): self.conversations_view.update()
+            Clock.schedule_once(cb, 0.15)
+            Clock.schedule_once(cbu, 0.15+0.25)
+
+        elif sender.conv_type == self.sideband.CONV_VOICE:
+            identity_hash = sender.sb_uid
+            def cb(dt): self.dial_action(identity_hash)
+            Clock.schedule_once(cb, 0.15)
 
     def open_conversation(self, context_dest, direction="left"):
         self.rec_dialog_is_open = False
@@ -1662,14 +1703,12 @@ class SidebandApp(MDApp):
             if self.outbound_mode_command:
                 return
 
-        def cb(dt):
-            self.message_send_dispatch(sender)
+        def cb(dt): self.message_send_dispatch(sender)
         Clock.schedule_once(cb, 0.20)
 
     def message_send_dispatch(self, sender=None):
         self.messages_view.ids.message_send_button.disabled = True
-        def cb(dt):
-            self.messages_view.ids.message_send_button.disabled = False
+        def cb(dt): self.messages_view.ids.message_send_button.disabled = False
         Clock.schedule_once(cb, 0.5)
 
         if self.root.ids.screen_manager.current == "messages_screen":
@@ -2565,21 +2604,27 @@ class SidebandApp(MDApp):
         if RNS.vendor.platformutils.is_android():
             hs = dp(22)
             yes_button = MDRectangleFlatButton(text="OK",font_size=dp(18))
+            full_button = MDRectangleFlatButton(text="Full RNS Status",font_size=dp(18), theme_text_color="Custom", line_color=self.color_accept, text_color=self.color_accept)
             dialog = MDDialog(
                 title="Connectivity Status",
                 text=str(self.get_connectivity_text()),
-                buttons=[ yes_button ],
+                buttons=[full_button, yes_button],
                 # elevation=0,
             )
             def cs_updater(dt):
                 dialog.text = str(self.get_connectivity_text())
             def dl_yes(s):
-                self.connectivity_updater.cancel()
                 dialog.dismiss()
                 if self.connectivity_updater != None:
                     self.connectivity_updater.cancel()
+            def cb_rns(sender):
+                dialog.dismiss()
+                if self.connectivity_updater != None:
+                    self.connectivity_updater.cancel()
+                self.rnstatus_action()
 
             yes_button.bind(on_release=dl_yes)
+            full_button.bind(on_release=cb_rns)
             dialog.open()
 
             if self.connectivity_updater != None:
@@ -2588,9 +2633,12 @@ class SidebandApp(MDApp):
             self.connectivity_updater = Clock.schedule_interval(cs_updater, 2.0)
 
         else:
-            if not self.utilities_ready:
-                self.utilities_init()
-            self.utilities_screen.rnstatus_action()
+            self.rnstatus_action()
+
+    def rnstatus_action(self, sender=None):
+        if not self.utilities_ready:
+            self.utilities_init()
+        self.utilities_screen.rnstatus_action()
 
     def ingest_lxm_action(self, sender):
         def cb(dt):
@@ -2747,7 +2795,8 @@ class SidebandApp(MDApp):
                     n_address = dialog.d_content.ids["n_address_field"].text
                     n_name = dialog.d_content.ids["n_name_field"].text
                     n_trusted = dialog.d_content.ids["n_trusted"].active
-                    new_result = self.sideband.new_conversation(n_address, n_name, n_trusted)
+                    n_voice_only = dialog.d_content.ids["n_voice_only"].active
+                    new_result = self.sideband.new_conversation(n_address, n_name, n_trusted, n_voice_only)
 
                 except Exception as e:
                     RNS.log("Error while creating conversation: "+str(e), RNS.LOG_ERROR)
@@ -2809,7 +2858,7 @@ class SidebandApp(MDApp):
             self.information_screen.ids.information_scrollview.effect_cls = ScrollEffect
             self.information_screen.ids.information_logo.icon = self.sideband.asset_dir+"/rns_256.png"
 
-            str_comps  =   " - [b]Reticulum[/b] (MIT License)\n - [b]LXMF[/b] (MIT License)\n - [b]KivyMD[/b] (MIT License)"
+            str_comps  =   " - [b]Reticulum[/b] (Reticulum License)\n - [b]LXMF[/b] (Reticulum License)\n - [b]KivyMD[/b] (MIT License)"
             str_comps += "\n - [b]Kivy[/b] (MIT License)\n - [b]Codec2[/b] (LGPL License)\n - [b]PyCodec2[/b] (BSD-3 License)"
             str_comps += "\n - [b]PyDub[/b] (MIT License)\n - [b]PyOgg[/b] (Public Domain) \n - [b]FFmpeg[/b] (GPL3 License)"
             str_comps += "\n - [b]GeoidHeight[/b] (LGPL License)\n - [b]Paho MQTT[/b] (EPL2 License)\n - [b]Python[/b] (PSF License)"
@@ -3148,6 +3197,15 @@ class SidebandApp(MDApp):
                 self.sideband.config["hq_ptt"] = self.settings_screen.ids.settings_hq_ptt.active
                 self.sideband.save_configuration()
 
+            def save_voice_enabled(sender=None, event=None):
+                self.sideband.config["voice_enabled"] = self.settings_screen.ids.settings_voice_enabled.active
+                self.sideband.save_configuration()
+
+                if self.sideband.config["voice_enabled"] == True:
+                    self.sideband.start_voice()
+                else:
+                    self.sideband.stop_voice()
+
             def save_print_command(sender=None, event=None):
                 if not sender.focus:
                     in_cmd = self.settings_screen.ids.settings_print_command.text
@@ -3323,6 +3381,10 @@ class SidebandApp(MDApp):
             self.settings_screen.ids.settings_hq_ptt.active = self.sideband.config["hq_ptt"]
             self.settings_screen.ids.settings_hq_ptt.bind(active=save_hq_ptt)
 
+            self.settings_screen.ids.settings_voice_enabled.active = self.sideband.config["voice_enabled"]
+            self.settings_screen.ids.settings_voice_enabled.bind(active=save_voice_enabled)
+            if RNS.vendor.platformutils.is_android(): self.settings_screen.ids.settings_voice_enabled.disabled = True
+
             self.settings_screen.ids.settings_debug.active = self.sideband.config["debug"]
             self.settings_screen.ids.settings_debug.bind(active=save_debug)
 
@@ -3478,6 +3540,7 @@ class SidebandApp(MDApp):
                 
             def save_connectivity(sender=None, event=None):
                 self.sideband.config["connect_transport"] = self.connectivity_screen.ids.connectivity_enable_transport.active
+                self.sideband.config["connect_share_instance"] = self.connectivity_screen.ids.connectivity_share_instance.active
                 self.sideband.config["connect_local"] = self.connectivity_screen.ids.connectivity_use_local.active
                 self.sideband.config["connect_local_groupid"] = self.connectivity_screen.ids.connectivity_local_groupid.text
                 self.sideband.config["connect_local_ifac_netname"] = self.connectivity_screen.ids.connectivity_local_ifac_netname.text
@@ -3635,6 +3698,10 @@ class SidebandApp(MDApp):
                     self.connectivity_screen.ids.connectivity_enable_transport.active = self.sideband.config["connect_transport"]
                     con_collapse_transport(collapse=not self.sideband.config["connect_transport"])
                     self.connectivity_screen.ids.connectivity_enable_transport.bind(active=save_connectivity)
+
+                    self.connectivity_screen.ids.connectivity_share_instance.active = self.sideband.config["connect_share_instance"]
+                    self.connectivity_screen.ids.connectivity_share_instance.bind(active=save_connectivity)
+
                     self.connectivity_screen.ids.connectivity_local_ifmode.text = self.sideband.config["connect_ifmode_local"].capitalize()
                     self.connectivity_screen.ids.connectivity_tcp_ifmode.text = self.sideband.config["connect_ifmode_tcp"].capitalize()
                     self.connectivity_screen.ids.connectivity_i2p_ifmode.text = self.sideband.config["connect_ifmode_i2p"].capitalize()
@@ -3714,7 +3781,8 @@ class SidebandApp(MDApp):
                 dialog.dismiss()
             yes_button.bind(on_release=dl_yes)
 
-            rpc_string = "rpc_key = "+RNS.hexrep(self.sideband.reticulum.rpc_key, delimit=False)
+            rpc_string  = "shared_instance_type = tcp\n"
+            rpc_string += "rpc_key = "+RNS.hexrep(self.sideband.reticulum.rpc_key, delimit=False)
             Clipboard.copy(rpc_string)
             dialog.open()
         
@@ -5732,6 +5800,62 @@ class SidebandApp(MDApp):
         self.utilities_action(direction="right")
 
 
+    ### voice Screen
+    ######################################
+
+    def voice_init(self):
+        if not self.voice_ready:
+            self.voice_screen = Voice(self)
+            self.voice_ready = True
+    
+    def voice_open(self, sender=None, direction="left", no_transition=False, dial_on_complete=None):
+        if no_transition:
+            self.root.ids.screen_manager.transition = self.no_transition
+        else:
+            self.root.ids.screen_manager.transition = self.slide_transition
+            self.root.ids.screen_manager.transition.direction = direction
+
+        self.root.ids.screen_manager.current = "voice_screen"
+        self.root.ids.nav_drawer.set_state("closed")
+        self.sideband.setstate("app.displaying", self.root.ids.screen_manager.current)
+
+        if no_transition:
+            self.root.ids.screen_manager.transition = self.slide_transition
+
+        self.voice_screen.update_call_status()
+        if dial_on_complete:
+            self.voice_screen.dial_target = dial_on_complete
+            self.voice_screen.screen.ids.identity_hash.text = RNS.hexrep(dial_on_complete, delimit=False)
+            Clock.schedule_once(self.voice_screen.dial_action, 0.25)
+
+    def voice_action(self, sender=None, direction="left", dial_on_complete=None):
+        if self.voice_ready:
+            self.voice_open(direction=direction, dial_on_complete=dial_on_complete)
+        else:
+            self.loader_action(direction=direction)
+            def final(dt):
+                self.voice_init()
+                def o(dt):
+                    self.voice_open(no_transition=True, dial_on_complete=dial_on_complete)
+                Clock.schedule_once(o, ll_ot)
+            Clock.schedule_once(final, ll_ft)
+
+    def close_sub_voice_action(self, sender=None):
+        self.voice_action(direction="right")
+
+    def dial_action(self, identity_hash):
+        self.voice_action(dial_on_complete=identity_hash)
+
+    def voice_answer_action(self, sender=None):
+        if self.sideband.voice_running:
+            if self.sideband.telephone.is_ringing: self.sideband.telephone.answer()
+
+    def voice_reject_action(self, sender=None):
+        if self.sideband.voice_running:
+            if self.sideband.telephone.is_ringing or self.sideband.telephone.is_in_call:
+                self.sideband.telephone.hangup()
+                toast("Call ended")
+
     ### Telemetry Screen
     ######################################
 
@@ -5844,7 +5968,7 @@ class SidebandApp(MDApp):
                 self.telemetry_info_dialog.dismiss()
             ok_button.bind(on_release=dl_ok)
 
-        result = self.sideband.request_latest_telemetry(from_addr=self.sideband.config["telemetry_collector"])
+        result = self.sideband.request_latest_telemetry(from_addr=self.sideband.config["telemetry_collector"], is_collector_request=True)
 
         if result == "no_address":
             title_str = "Invalid Address"
@@ -5854,10 +5978,10 @@ class SidebandApp(MDApp):
             info_str  = "No keys known for the destination. Connected reticules have been queried for the keys. Try again when an announce for the destination has arrived."
         elif result == "in_progress":
             title_str = "Transfer In Progress"
-            info_str  = "There is already a telemetry request transfer in progress for this peer."
+            info_str  = "There is already a telemetry request transfer in progress to the collector."
         elif result == "sent":
             title_str = "Request Sent"
-            info_str  = "A telemetry request was sent to the peer. The peer should send any available telemetry shortly."
+            info_str  = "A telemetry request was sent to the collector. The collector should send any available telemetry shortly."
         elif result == "not_sent":
             title_str = "Not Sent"
             info_str  = "A telemetry request could not be sent."
@@ -6536,7 +6660,7 @@ class SidebandApp(MDApp):
 
                 latest_viewable = None
                 if not skip:
-                    for telemetry_entry in telemetry_entries[telemetry_source]:
+                    for telemetry_entry in sorted(telemetry_entries[telemetry_source], key=lambda t: t[0], reverse=True):
                         telemetry_timestamp = telemetry_entry[0]
                         telemetry_data = telemetry_entry[1]
                         t = Telemeter.from_packed(telemetry_data)
@@ -6544,6 +6668,10 @@ class SidebandApp(MDApp):
                             telemetry = t.read_all()
                             if "location" in telemetry and telemetry["location"] != None and telemetry["location"]["latitude"] != None and telemetry["location"]["longitude"] != None:
                                 latest_viewable = telemetry
+                                break
+                            elif "connection_map" in telemetry:
+                                # TODO: Telemetry entries with connection map sensor types are skipped for now,
+                                # until a proper rendering mechanism is implemented
                                 break
 
                     if latest_viewable != None:
@@ -6767,13 +6895,21 @@ def run():
             config_path=args.config,
             is_client=False,
             verbose=(args.verbose or __debug_build__),
-            is_daemon=True
+            quiet=(args.interactive and not args.verbose),
+            is_daemon=True,
+            rns_config_path=args.rnsconfig,
         )
 
         sideband.version_str = "v"+__version__+" "+__variant__
         sideband.start()
-        while True:
-            time.sleep(5)
+        
+        if args.interactive:
+            while not sideband.getstate("core.started") == True: time.sleep(0.1)
+            from .sideband import console
+            console.attach(sideband)
+            
+        else:
+            while True: time.sleep(5)
     else:
         ExceptionManager.add_handler(SidebandExceptionHandler())
         SidebandApp().run()

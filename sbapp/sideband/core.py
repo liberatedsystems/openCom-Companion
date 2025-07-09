@@ -8,6 +8,7 @@ import sqlite3
 import random
 import shlex
 import re
+import gc
 
 import RNS.vendor.umsgpack as msgpack
 import RNS.Interfaces.Interface as Interface
@@ -107,6 +108,7 @@ class SidebandCore():
     CONV_P2P       = 0x01
     CONV_GROUP     = 0x02
     CONV_BROADCAST = 0x03
+    CONV_VOICE     = 0x04
 
     MAX_ANNOUNCES  = 24
 
@@ -146,7 +148,7 @@ class SidebandCore():
 
             self.log_announce(destination_hash, app_data, dest_type=SidebandCore.aspect_filter, stamp_cost=sc, link_stats=link_stats)
 
-    def __init__(self, owner_app, config_path = None, is_service=False, is_client=False, android_app_dir=None, verbose=False, owner_service=None, service_context=None, is_daemon=False, load_config_only=False):
+    def __init__(self, owner_app, config_path = None, is_service=False, is_client=False, android_app_dir=None, verbose=False, quiet=False, owner_service=None, service_context=None, is_daemon=False, load_config_only=False, rns_config_path=None):
         self.is_service = is_service
         self.is_client = is_client
         self.is_daemon = is_daemon
@@ -162,16 +164,20 @@ class SidebandCore():
         else:
             self.is_standalone = False
 
-        self.log_verbose = verbose
+        self.log_verbose = (verbose and not quiet)
+        self.log_quiet = quiet
         self.log_deque = deque(maxlen=self.LOG_DEQUE_MAXLEN)
         self.owner_app = owner_app
         self.reticulum = None
         self.webshare_server = None
+        self.voice_running = False
+        self.telephone = None
         self.telemeter = None
         self.telemetry_running = False
         self.latest_telemetry = None
         self.latest_packed_telemetry = None
         self.telemetry_changes = 0
+        self.telemetry_response_excluded = []
         self.pending_telemetry_send = False
         self.pending_telemetry_send_try = 0
         self.pending_telemetry_send_maxtries = 2
@@ -204,7 +210,7 @@ class SidebandCore():
 
         self.cache_dir       = self.app_dir+"/cache"
         
-        self.rns_configdir = None
+        self.rns_configdir = rns_config_path
 
         core_path          = os.path.abspath(__file__)
         if "core.pyc" in core_path:
@@ -248,13 +254,15 @@ class SidebandCore():
         if not os.path.isdir(self.app_dir+"/app_storage"):
             os.makedirs(self.app_dir+"/app_storage")
 
-        self.config_path   = self.app_dir+"/app_storage/occ_config"
-        self.identity_path = self.app_dir+"/app_storage/primary_identity"
-        self.db_path       = self.app_dir+"/app_storage/occ.db"
-        self.lxmf_storage  = self.app_dir+"/app_storage/"
-        self.log_dir       = self.app_dir+"/app_storage/"
-        self.tmp_dir       = self.app_dir+"/app_storage/tmp"
-        self.exports_dir   = self.app_dir+"/exports"
+        self.config_path            = self.app_dir+"/app_storage/sideband_config"
+        self.identity_path          = self.app_dir+"/app_storage/primary_identity"
+        self.db_path                = self.app_dir+"/app_storage/sideband.db"
+        self.lxmf_storage           = self.app_dir+"/app_storage/"
+        self.log_dir                = self.app_dir+"/app_storage/"
+        self.tmp_dir                = self.app_dir+"/app_storage/tmp"
+        self.exports_dir            = self.app_dir+"/exports"
+        self.telemetry_exclude_path = self.app_dir+"/app_storage/collector_response_excluded"
+
         if RNS.vendor.platformutils.is_android():
             self.webshare_dir  = "./share/"
         else:
@@ -265,6 +273,7 @@ class SidebandCore():
         self.webshare_ssl_cert_path = self.app_dir+"/app_storage/ssl_cert.pem"
 
         self.mqtt = None
+        self.mqtt_handle_lock = threading.Lock()
         
         self.first_run     = True
         self.saving_configuration = False
@@ -582,6 +591,12 @@ class SidebandCore():
         self.config["telemetry_send_to_trusted"] = False
         self.config["telemetry_send_to_collector"] = False
 
+        # Voice
+        self.config["voice_enabled"] = False
+        self.config["voice_output"] = None
+        self.config["voice_input"] = None
+        self.config["voice_ringer"] = None
+
         if not os.path.isfile(self.db_path):
             self.__db_init()
         else:
@@ -611,11 +626,36 @@ class SidebandCore():
 
         self.save_configuration()
 
+    def __load_telemetry_collector_excluded(self):
+        if not os.path.isfile(self.telemetry_exclude_path):
+            try:
+                file = open(self.telemetry_exclude_path, "wb")
+                file.write("# To exclude destinations from telemetry\n# collector responses, add them to this\n# file with one destination hash per line\n".encode("utf-8"))
+                file.close()
+            except Exception as e:
+                RNS.log(f"Could not create telemetry collector exclude file at {self.telemetry_exclude_path}", RNS.LOG_ERROR)
+
+        try:
+            with open(self.telemetry_exclude_path, "rb") as file:
+                data = file.read().decode("utf-8")
+                for line in data.splitlines():
+                    if not line.startswith("#"):
+                        if len(line) >= RNS.Reticulum.TRUNCATED_HASHLENGTH//8*2:
+                            try:
+                                destination_hash = bytes.fromhex(line[:RNS.Reticulum.TRUNCATED_HASHLENGTH//8*2])
+                                self.telemetry_response_excluded.append(destination_hash)
+                            except Exception as e:
+                                RNS.log(f"Invalid destination hash {line} in telemetry response exclude file: {e}", RNS.LOG_ERROR)
+
+        except Exception as e:
+            RNS.log(f"Error while loading telemetry collector response excludes: {e}", RNS.LOG_ERROR)
+
+
     def __load_config(self):
         RNS.log("Loading openCom Companion identity...", RNS.LOG_DEBUG)
         self.identity = RNS.Identity.from_file(self.identity_path)
 
-        self.rpc_addr = ("127.0.0.1", 48165)
+        self.rpc_addr = f"\0sideband/rpc"
         self.rpc_key  = RNS.Identity.full_hash(self.identity.get_private_key())
 
         RNS.log("Loading openCom Companion configuration... "+str(self.config_path), RNS.LOG_DEBUG)
@@ -674,6 +714,8 @@ class SidebandCore():
             self.config["config_template"] = None
         if not "connect_transport" in self.config:
             self.config["connect_transport"] = False
+        if not "connect_share_instance" in self.config:
+            self.config["connect_share_instance"] = False
         if not "connect_rnode" in self.config:
             self.config["connect_rnode"] = False
         if not "connect_rnode_ifac_netname" in self.config:
@@ -904,6 +946,17 @@ class SidebandCore():
         if not "map_storage_file" in self.config:
             self.config["map_storage_file"] = None
 
+        if not "voice_enabled" in self.config:
+            self.config["voice_enabled"] = False
+        if not "voice_output" in self.config:
+            self.config["voice_output"] = None
+        if not "voice_input" in self.config:
+            self.config["voice_input"] = None
+        if not "voice_ringer" in self.config:
+            self.config["voice_ringer"] = None
+        if not "voice_trusted_only" in self.config:
+            self.config["voice_trusted_only"] = False
+
         # Make sure we have a database
         if not os.path.isfile(self.db_path):
             self.__db_init()
@@ -913,6 +966,8 @@ class SidebandCore():
             self._db_inittelemetry()
             self._db_upgradetables()
             self.__db_indices()
+
+        self.__load_telemetry_collector_excluded()
 
     def __reload_config(self):
         RNS.log("Reloading openCom Companion configuration... ", RNS.LOG_DEBUG)
@@ -1060,13 +1115,16 @@ class SidebandCore():
                     notifications_permitted = True
 
                 if notifications_permitted:
-                    if RNS.vendor.platformutils.get_platform() == "android":
-                        if self.is_service:
-                            self.owner_service.android_notification(title, content, group=group, context_id=context_id)
+                    try:
+                        if RNS.vendor.platformutils.get_platform() == "android":
+                            if self.is_service:
+                                self.owner_service.android_notification(title, content, group=group, context_id=context_id)
+                            else:
+                                plyer.notification.notify(title, content, notification_icon=self.notification_icon, context_override=None)
                         else:
-                            plyer.notification.notify(title, content, notification_icon=self.notification_icon, context_override=None)
-                    else:
-                        plyer.notification.notify(title, content, app_icon=self.icon_32)
+                            plyer.notification.notify(title, content, app_icon=self.icon_32)
+                    except Exception as e:
+                        RNS.log("An error occurred while posting a notification to the operating system: {e}", RNS.LOG_ERROR)
 
     def log_announce(self, dest, app_data, dest_type, stamp_cost=None, link_stats=None):
         try:
@@ -1119,6 +1177,20 @@ class SidebandCore():
 
         except Exception as e:
             RNS.log("Error while checking trust for "+RNS.prettyhexrep(context_dest)+": "+str(e), RNS.LOG_ERROR)
+            return False
+
+    def voice_is_trusted(self, identity_hash):
+        context_dest = identity_hash
+        try:
+            lxmf_destination_hash = RNS.Destination.hash_from_name_and_identity("lxmf.delivery", identity_hash)
+            existing_voice = self._db_conversation(context_dest)
+            existing_lxmf  = self._db_conversation(lxmf_destination_hash)
+            if existing_lxmf: trust = existing_lxmf["trust"]
+            else: trust = existing_voice["trust"]
+            return trust == 1
+
+        except Exception as e:
+            RNS.log("Could not decode a valid peer name from data: "+str(e), RNS.LOG_DEBUG)
             return False
 
     def is_object(self, context_dest, conv_data = None):
@@ -1280,6 +1352,22 @@ class SidebandCore():
             RNS.log("Could not decode a valid peer name from data: "+str(e), RNS.LOG_DEBUG)
             return RNS.prettyhexrep(context_dest)
 
+    def voice_display_name(self, identity_hash):
+        context_dest = identity_hash
+        if context_dest == self.lxmf_destination.hash:
+            return self.config["display_name"]
+
+        try:
+            lxmf_destination_hash = RNS.Destination.hash_from_name_and_identity("lxmf.delivery", identity_hash)
+            existing_voice = self._db_conversation(context_dest)
+            existing_lxmf  = self._db_conversation(lxmf_destination_hash)
+            if existing_lxmf: return self.peer_display_name(lxmf_destination_hash)
+            else: return self.peer_display_name(identity_hash)
+
+        except Exception as e:
+            RNS.log("Could not decode a valid peer name from data: "+str(e), RNS.LOG_DEBUG)
+            return RNS.prettyhexrep(context_dest)
+
     def clear_conversation(self, context_dest):
         self._db_clear_conversation(context_dest)
 
@@ -1382,13 +1470,13 @@ class SidebandCore():
             else:
                 self.setstate(f"telemetry.{RNS.hexrep(message.destination_hash, delimit=False)}.request_sending", False)
 
-    def _service_request_latest_telemetry(self, from_addr=None):
+    def _service_request_latest_telemetry(self, from_addr=None, is_collector_request=False):
         if not RNS.vendor.platformutils.is_android():
             return False
         else:
             if self.is_client:
                 try:
-                    return self.service_rpc_request({"request_latest_telemetry": {"from_addr": from_addr}})
+                    return self.service_rpc_request({"request_latest_telemetry": {"from_addr": from_addr, "is_collector_request": is_collector_request}})
                     
                 except Exception as e:
                     RNS.log("Error while requesting latest telemetry over RPC: "+str(e), RNS.LOG_DEBUG)
@@ -1397,10 +1485,10 @@ class SidebandCore():
             else:
                 return False
 
-    def request_latest_telemetry(self, from_addr=None, is_livetrack=False):
+    def request_latest_telemetry(self, from_addr=None, is_livetrack=False, is_collector_request=False):
         if self.allow_service_dispatch and self.is_client:
             try:
-                return self._service_request_latest_telemetry(from_addr)
+                return self._service_request_latest_telemetry(from_addr, is_collector_request=is_collector_request)
 
             except Exception as e:
                 RNS.log("Error requesting latest telemetry: "+str(e), RNS.LOG_ERROR)
@@ -1439,7 +1527,7 @@ class SidebandCore():
 
                         request_timebase = self.getpersistent(f"telemetry.{RNS.hexrep(from_addr, delimit=False)}.timebase") or now - self.telemetry_request_max_history
                         lxm_fields = { LXMF.FIELD_COMMANDS: [
-                            {Commands.TELEMETRY_REQUEST: request_timebase},
+                            {Commands.TELEMETRY_REQUEST: [request_timebase, is_collector_request]},
                         ]}
 
                         lxm = LXMF.LXMessage(dest, source, "", desired_method=desired_method, fields = lxm_fields, include_ticket=True)
@@ -1535,7 +1623,7 @@ class SidebandCore():
             else:
                 return False
 
-    def send_latest_telemetry(self, to_addr=None, stream=None, is_authorized_telemetry_request=False):
+    def send_latest_telemetry(self, to_addr=None, stream=None, is_authorized_telemetry_request=False, is_collector_response=False):
         if self.allow_service_dispatch and self.is_client:
             try:
                 return self._service_send_latest_telemetry(to_addr, stream, is_authorized_telemetry_request)
@@ -1577,7 +1665,7 @@ class SidebandCore():
                             else:
                                 desired_method = LXMF.LXMessage.DIRECT
 
-                        lxm_fields = self.get_message_fields(to_addr, is_authorized_telemetry_request=is_authorized_telemetry_request, signal_already_sent=True)
+                        lxm_fields = self.get_message_fields(to_addr, is_authorized_telemetry_request=is_authorized_telemetry_request, signal_already_sent=True, is_collector_response=is_collector_response)
                         if lxm_fields == False and stream == None:
                             return "already_sent"
 
@@ -1802,7 +1890,7 @@ class SidebandCore():
         try:
             with self.rpc_lock:
                 if self.rpc_connection == None:
-                    self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, authkey=self.rpc_key)
+                    self.rpc_connection = multiprocessing.connection.Client(self.rpc_addr, family="AF_UNIX", authkey=self.rpc_key)
                 self.rpc_connection.send(request)
                 response = self.rpc_connection.recv()
                 return response
@@ -1875,12 +1963,12 @@ class SidebandCore():
             mr = self.message_router
             oh = destination_hash
             ol = None
-            if oh in mr.direct_links:
+            if oh in mr.direct_links and mr.direct_links[oh].status == RNS.Link.ACTIVE:
                 ol = mr.direct_links[oh]
             elif oh in mr.backchannel_links:
                 ol = mr.backchannel_links[oh]
 
-            if ol != None:
+            if ol != None and ol.status == RNS.Link.ACTIVE:
                 ler = ol.get_establishment_rate()
                 if ler:
                     return ler
@@ -1905,15 +1993,113 @@ class SidebandCore():
                     RNS.log(ed, RNS.LOG_DEBUG)
                     return None
 
+    def _get_destination_mtu(self, destination_hash):
+        try:
+            mr = self.message_router
+            oh = destination_hash
+            ol = None
+            if oh in mr.direct_links and mr.direct_links[oh].status == RNS.Link.ACTIVE:
+                ol = mr.direct_links[oh]
+            elif oh in mr.backchannel_links:
+                ol = mr.backchannel_links[oh]
+
+            if ol != None and ol.status == RNS.Link.ACTIVE:
+                return ol.get_mtu()
+
+            return None
+
+        except Exception as e:
+            RNS.trace_exception(e)
+            return None
+
+    def get_destination_mtu(self, destination_hash):
+        if not RNS.vendor.platformutils.is_android():
+            return self._get_destination_mtu(destination_hash)
+        else:
+            if self.is_service:
+                return self._get_destination_mtu(destination_hash)
+            else:
+                try:
+                    return self.service_rpc_request({"get_destination_mtu": destination_hash})
+                except Exception as e:
+                    ed = "Error while getting destination link MTU over RPC: "+str(e)
+                    RNS.log(ed, RNS.LOG_DEBUG)
+                    return None
+
+    def _get_destination_edr(self, destination_hash):
+        try:
+            mr = self.message_router
+            oh = destination_hash
+            ol = None
+            if oh in mr.direct_links and mr.direct_links[oh].status == RNS.Link.ACTIVE:
+                ol = mr.direct_links[oh]
+            elif oh in mr.backchannel_links:
+                ol = mr.backchannel_links[oh]
+
+            if ol != None and ol.status == RNS.Link.ACTIVE:
+                return ol.get_expected_rate()
+
+            return None
+
+        except Exception as e:
+            RNS.trace_exception(e)
+            return None
+
+    def get_destination_edr(self, destination_hash):
+        if not RNS.vendor.platformutils.is_android():
+            return self._get_destination_edr(destination_hash)
+        else:
+            if self.is_service:
+                return self._get_destination_edr(destination_hash)
+            else:
+                try:
+                    return self.service_rpc_request({"get_destination_edr": destination_hash})
+                except Exception as e:
+                    ed = "Error while getting destination link EIFR over RPC: "+str(e)
+                    RNS.log(ed, RNS.LOG_DEBUG)
+                    return None
+
+    def _get_destination_lmd(self, destination_hash):
+        try:
+            mr = self.message_router
+            oh = destination_hash
+            ol = None
+            if oh in mr.direct_links and mr.direct_links[oh].status == RNS.Link.ACTIVE:
+                ol = mr.direct_links[oh]
+            elif oh in mr.backchannel_links:
+                ol = mr.backchannel_links[oh]
+
+            if ol != None and ol.status == RNS.Link.ACTIVE: return ol.get_mode()
+
+            return None
+
+        except Exception as e:
+            RNS.trace_exception(e)
+            return None
+
+    def get_destination_lmd(self, destination_hash):
+        if not RNS.vendor.platformutils.is_android():
+            return self._get_destination_lmd(destination_hash)
+        else:
+            if self.is_service:
+                return self._get_destination_lmd(destination_hash)
+            else:
+                try:
+                    return self.service_rpc_request({"get_destination_lmd": destination_hash})
+                except Exception as e:
+                    ed = "Error while getting destination link mode over RPC: "+str(e)
+                    RNS.log(ed, RNS.LOG_DEBUG)
+                    return None
+
     def __start_rpc_listener(self):
         try:
             RNS.log("Starting RPC listener", RNS.LOG_DEBUG)
-            self.rpc_listener = multiprocessing.connection.Listener(self.rpc_addr, authkey=self.rpc_key)
+            self.rpc_listener = multiprocessing.connection.Listener(self.rpc_addr, family="AF_UNIX", authkey=self.rpc_key)
             thread = threading.Thread(target=self.__rpc_loop)
             thread.daemon = True
             thread.start()
         except Exception as e:
-            RNS.log("Could not start RPC listener on "+str(self.rpc_addr)+". Terminating now. Clear up anything using the port and try again.", RNS.LOG_ERROR)
+            RNS.log("Could not start RPC listener on @"+str(self.rpc_addr[1:])+". Terminating now. Clear up anything using the port and try again.", RNS.LOG_ERROR)
             RNS.panic()
 
     def __rpc_loop(self):
@@ -1949,6 +2135,12 @@ class SidebandCore():
                                     connection.send(self._get_plugins_info())
                                 elif "get_destination_establishment_rate" in call:
                                     connection.send(self._get_destination_establishment_rate(call["get_destination_establishment_rate"]))
+                                elif "get_destination_mtu" in call:
+                                    connection.send(self._get_destination_mtu(call["get_destination_mtu"]))
+                                elif "get_destination_edr" in call:
+                                    connection.send(self._get_destination_edr(call["get_destination_edr"]))
+                                elif "get_destination_lmd" in call:
+                                    connection.send(self._get_destination_lmd(call["get_destination_lmd"]))
                                 elif "send_message" in call:
                                     args = call["send_message"]
                                     send_result = self.send_message(
@@ -1974,7 +2166,7 @@ class SidebandCore():
                                     connection.send(send_result)
                                 elif "request_latest_telemetry" in call:
                                     args = call["request_latest_telemetry"]
-                                    send_result = self.request_latest_telemetry(args["from_addr"])
+                                    send_result = self.request_latest_telemetry(args["from_addr"], is_collector_request=args["is_collector_request"])
                                     connection.send(send_result)
                                 elif "send_latest_telemetry" in call:
                                     args = call["send_latest_telemetry"]
@@ -2085,6 +2277,7 @@ class SidebandCore():
         dbc = db.cursor()
 
         dbc.execute("CREATE TABLE IF NOT EXISTS telemetry (id INTEGER PRIMARY KEY, dest_context BLOB, ts INTEGER, data BLOB)")
+        dbc.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry(ts)")
         db.commit()
 
     def _db_upgradetables(self):
@@ -2626,6 +2819,7 @@ class SidebandCore():
                         "last_rx": last_rx,
                         "last_tx": last_tx,
                         "last_activity": last_activity,
+                        "type": entry[4],
                         "trust": entry[5],
                         "data": data,
                     }
@@ -2774,6 +2968,27 @@ class SidebandCore():
 
         if name != None and name != "":
             self._db_conversation_set_name(context_dest, name)
+
+        self.__event_conversations_changed()
+
+    def _db_create_voice_object(self, identity_hash, name = None, trust = False):
+        RNS.log("Creating voice object for "+RNS.prettyhexrep(identity_hash), RNS.LOG_DEBUG)
+        with self.db_lock:
+            db = self.__db_connect()
+            dbc = db.cursor()
+
+            def_name = "".encode("utf-8")
+            query = "INSERT INTO conv (dest_context, last_tx, last_rx, unread, type, trust, name, data) values (?, ?, ?, ?, ?, ?, ?, ?)"
+            data = (identity_hash, 0, time.time(), 0, SidebandCore.CONV_VOICE, 0, def_name, msgpack.packb(None))
+
+            dbc.execute(query, data)
+            db.commit()
+
+        if trust:
+            self._db_conversation_set_trusted(identity_hash, True)
+
+        if name != None and name != "":
+            self._db_conversation_set_name(identity_hash, name)
 
         self.__event_conversations_changed()
 
@@ -3032,6 +3247,7 @@ class SidebandCore():
                             tpacked = telemetry_entry[2]
                             appearance = telemetry_entry[3]
                             max_timebase = max(max_timebase, ttstamp)
+
                             if self._db_save_telemetry(tsource, tpacked, via = context_dest):
                                 RNS.log("Saved telemetry stream entry from "+RNS.prettyhexrep(tsource), RNS.LOG_DEBUG)
                                 if appearance != None:
@@ -3191,12 +3407,37 @@ class SidebandCore():
         self.setstate("app.flags.last_telemetry", time.time())
 
     def mqtt_handle_telemetry(self, context_dest, telemetry):
-        if self.mqtt == None:
-            self.mqtt = MQTT()
+        with self.mqtt_handle_lock:
+            # TODO: Remove debug
+            if hasattr(self, "last_mqtt_recycle") and time.time() > self.last_mqtt_recycle + 60*4:
+                # RNS.log("Recycling MQTT handler", RNS.LOG_DEBUG)
+                self.mqtt.stop()
+                self.mqtt.client = None
+                self.mqtt = None
+                gc.collect()
 
-        self.mqtt.set_server(self.config["telemetry_mqtt_host"], self.config["telemetry_mqtt_port"])
-        self.mqtt.set_auth(self.config["telemetry_mqtt_user"], self.config["telemetry_mqtt_pass"])
-        self.mqtt.handle(context_dest, telemetry)
+            if self.mqtt == None:
+                self.mqtt = MQTT()
+                self.last_mqtt_recycle = time.time()
+
+            self.mqtt.set_server(self.config["telemetry_mqtt_host"], self.config["telemetry_mqtt_port"])
+            self.mqtt.set_auth(self.config["telemetry_mqtt_user"], self.config["telemetry_mqtt_pass"])
+            self.mqtt.handle(context_dest, telemetry)
+
+            # TODO: Remove debug
+            # if not hasattr(self, "memtr"):
+            #     from pympler import muppy
+            #     from pympler import summary
+            #     import resource
+            #     self.res = resource
+            #     self.ms = summary; self.mp = muppy
+            #     self.memtr = self.ms.summarize(self.mp.get_objects())
+            #     RNS.log(f"RSS: {RNS.prettysize(self.res.getrusage(self.res.RUSAGE_SELF).ru_maxrss*1000)}")
+            # else:
+            #     memsum = self.ms.summarize(self.mp.get_objects())
+            #     memdiff = self.ms.get_diff(self.memtr, memsum)
+            #     self.ms.print_(memdiff)
+            #     RNS.log(f"RSS: {RNS.prettysize(self.res.getrusage(self.res.RUSAGE_SELF).ru_maxrss*1000)}")
 
     def update_telemetry(self):
         try:
@@ -3281,7 +3522,7 @@ class SidebandCore():
                     else:
                         self.telemeter.disable(sensor)
 
-            for telemetry_plugin in self.active_telemetry_plugins:
+            for telemetry_plugin in self.active_telemetry_plugins.copy():
                 try:
                     plugin = self.active_telemetry_plugins[telemetry_plugin]
                     plugin.update_telemetry(self.telemeter)
@@ -3401,6 +3642,7 @@ class SidebandCore():
                                     if self.config["start_announce"] == True:
                                         time.sleep(12)
                                         self.lxmf_announce(attached_interface=self.interface_local)
+                                        if self.telephone: self.telephone.announce(attached_interface=self.interface_local)
                                 threading.Thread(target=job, daemon=True).start()
 
                     if hasattr(self, "interface_rnode") and self.interface_rnode != None:
@@ -3488,6 +3730,7 @@ class SidebandCore():
                             aif = announce_attached_interface
                             time.sleep(delay)
                             self.lxmf_announce(attached_interface=aif)
+                            if self.telephone: self.telephone.announce(attached_interface=aif)
                         return x
 
                     threading.Thread(target=gen_announce_job(announce_delay, announce_attached_interface), daemon=True).start()
@@ -3663,7 +3906,7 @@ class SidebandCore():
                                 if now > last_request_timebase+request_interval:
                                     try:
                                         RNS.log("Initiating telemetry request to collector", RNS.LOG_DEBUG)
-                                        self.request_latest_telemetry(from_addr=self.config["telemetry_collector"])
+                                        self.request_latest_telemetry(from_addr=self.config["telemetry_collector"], is_collector_request=True)
                                     except Exception as e:
                                         RNS.log("An error occurred while requesting a telemetry update from collector. The contained exception was: "+str(e), RNS.LOG_ERROR)
 
@@ -3702,6 +3945,7 @@ class SidebandCore():
                 def da():
                     time.sleep(8)
                     self.lxmf_announce()
+                    if self.telephone: self.telephone.announce()
                     self.last_if_change_announce = time.time()
                 threading.Thread(target=da, daemon=True).start()
 
@@ -3709,8 +3953,8 @@ class SidebandCore():
             self.periodic_thread.start()
 
         if self.is_standalone or self.is_client:
-            if self.config["telemetry_enabled"]:
-                self.run_telemetry()
+            if self.config["telemetry_enabled"]: self.run_telemetry()
+            if self.config["voice_enabled"]: self.start_voice()
         elif self.is_service:
             self.run_service_telemetry()
 
@@ -3934,10 +4178,9 @@ class SidebandCore():
 
     def _reticulum_log_debug(self, debug=False):
         self.log_verbose = debug
-        if self.log_verbose:
-            selected_level = 7 # debugging purposes
-        else:
-            selected_level = 2
+        if self.log_quiet: selected_level = 0
+        elif self.log_verbose: selected_level = 6
+        else: selected_level = 2
 
         RNS.loglevel = selected_level
         if self.is_client:
@@ -3952,15 +4195,21 @@ class SidebandCore():
         return "\n".join(self.log_deque)
 
     def __start_jobs_immediate(self):
-        if self.log_verbose:
-            selected_level = 7 # debugging purposes
+        if self.log_quiet:
+            selected_level = 0
+        elif self.log_verbose:
+            selected_level = 6
         else:
             selected_level = 2
 
         self.setstate("init.loadingstate", "Substantiating Reticulum")
         
         try:
-            self.reticulum = RNS.Reticulum(configdir=self.rns_configdir, loglevel=selected_level, logdest=self._log_handler)
+            if RNS.vendor.platformutils.is_android() and self.config["connect_share_instance"] == True:
+                self.reticulum = RNS.Reticulum(configdir=self.rns_configdir, loglevel=selected_level, logdest=self._log_handler, shared_instance_type="tcp")
+            else:
+                self.reticulum = RNS.Reticulum(configdir=self.rns_configdir, loglevel=selected_level, logdest=self._log_handler)
+            
             if RNS.vendor.platformutils.is_android():
                 if self.is_service:
                     if os.path.isfile(self.rns_configdir+"/config_template_invalid"):
@@ -4026,13 +4275,13 @@ class SidebandCore():
                                     ifac_size = None
 
                                 interface_config = {
-                                    "name": "TCPClientInterface",
+                                    "name": "TCP Client",
                                     "target_host": tcp_host,
                                     "target_port": tcp_port,
                                     "kiss_framing": False,
                                     "i2p_tunneled": False,
                                 }
-                                tcpinterface = RNS.Interfaces.TCPInterface.TCPClientInterface(RNS.Transport, interface_config)
+                                tcpinterface = RNS.Interfaces.BackboneInterface.BackboneClientInterface(RNS.Transport, interface_config)
                                 tcpinterface.OUT = True
 
                                 if RNS.Reticulum.transport_enabled():
@@ -4305,7 +4554,7 @@ class SidebandCore():
                     except Exception as e:
                         RNS.log("Error while setting last successul telemetry timebase for "+RNS.prettyhexrep(message.destination_hash), RNS.LOG_DEBUG)
 
-    def get_message_fields(self, context_dest, telemetry_update=False, is_authorized_telemetry_request=False, signal_already_sent=False):
+    def get_message_fields(self, context_dest, telemetry_update=False, is_authorized_telemetry_request=False, signal_already_sent=False, is_collector_response=False):
         fields = {}
         send_telemetry = (telemetry_update == True) or (self.should_send_telemetry(context_dest) or is_authorized_telemetry_request)
         send_appearance = self.config["telemetry_send_appearance"] or send_telemetry
@@ -4314,7 +4563,10 @@ class SidebandCore():
             telemeter = Telemeter.from_packed(self.latest_packed_telemetry)
             telemetry_timebase = telemeter.read_all()["time"]["utc"]
             last_success_tb = (self.getpersistent(f"telemetry.{RNS.hexrep(context_dest, delimit=False)}.last_send_success_timebase") or 0)
-            if telemetry_timebase > last_success_tb:
+            if is_collector_response and self.lxmf_destination.hash in self.telemetry_response_excluded:
+                RNS.log("Not embedding own telemetry collector response since own destination hash is excluded", RNS.LOG_DEBUG)
+                send_telemetry = False
+            elif telemetry_timebase > last_success_tb:
                 RNS.log("Embedding own telemetry in message since current telemetry is newer than latest successful timebase", RNS.LOG_DEBUG)
             else:
                 RNS.log("Not embedding own telemetry in message since current telemetry timebase ("+str(telemetry_timebase)+") is not newer than latest successful timebase ("+str(last_success_tb)+")", RNS.LOG_DEBUG)
@@ -4637,7 +4889,7 @@ class SidebandCore():
                 RNS.log("Error while sending message: "+str(e), RNS.LOG_ERROR)
                 return False
 
-    def new_conversation(self, dest_str, name = "", trusted = False):
+    def new_conversation(self, dest_str, name = "", trusted = False, voice_only = False):
         if len(dest_str) != RNS.Reticulum.TRUNCATED_HASHLENGTH//8*2:
             return False
 
@@ -4647,7 +4899,8 @@ class SidebandCore():
                 RNS.log("Cannot create conversation with own LXMF address", RNS.LOG_ERROR)
                 return False
             else:
-                self._db_create_conversation(addr_b, name, trusted)
+                if not voice_only: self._db_create_conversation(addr_b, name, trusted)
+                else:              self._db_create_voice_object(addr_b, name, trusted)
 
         except Exception as e:
             RNS.log("Error while creating conversation: "+str(e), RNS.LOG_ERROR)
@@ -5076,11 +5329,19 @@ class SidebandCore():
             RNS.log("Handling commands from "+RNS.prettyhexrep(context_dest), RNS.LOG_DEBUG)
             for command in commands:
                 if Commands.TELEMETRY_REQUEST in command:
-                    timebase = int(command[Commands.TELEMETRY_REQUEST])
+                    if type(command[Commands.TELEMETRY_REQUEST]) == list:
+                        command_timebase = command[Commands.TELEMETRY_REQUEST][0]
+                        enable_collector_request = command[Commands.TELEMETRY_REQUEST][1]
+                    else:
+                        # Handle old request format
+                        command_timebase = command[Commands.TELEMETRY_REQUEST]
+                        enable_collector_request = True
+
+                    timebase = int(command_timebase)
                     RNS.log("Handling telemetry request with timebase "+str(timebase), RNS.LOG_DEBUG)
-                    if self.config["telemetry_collector_enabled"]:
+                    if self.config["telemetry_collector_enabled"] and enable_collector_request:
                         RNS.log(f"Collector requests enabled, returning complete telemetry response for all known objects since {timebase}", RNS.LOG_DEBUG)
-                        self.create_telemetry_collector_response(to_addr=context_dest, timebase=timebase, is_authorized_telemetry_request=True)
+                        self.create_telemetry_collector_response(to_addr=context_dest, timebase=timebase, is_authorized_telemetry_request=True, is_collector_response=True)
                     else:
                         RNS.log("Responding with own latest telemetry", RNS.LOG_DEBUG)
                         self.send_latest_telemetry(to_addr=context_dest)
@@ -5116,7 +5377,7 @@ class SidebandCore():
         except Exception as e:
             RNS.log("Error while handling commands: "+str(e), RNS.LOG_ERROR)
 
-    def create_telemetry_collector_response(self, to_addr, timebase, is_authorized_telemetry_request=False):
+    def create_telemetry_collector_response(self, to_addr, timebase, is_authorized_telemetry_request=False, is_collector_response=False):
         if self.getstate(f"telemetry.{RNS.hexrep(to_addr, delimit=False)}.update_sending") == True:
             RNS.log("Not sending new telemetry collector response, since an earlier transfer is already in progress", RNS.LOG_DEBUG)
             return "in_progress"
@@ -5128,20 +5389,23 @@ class SidebandCore():
         elements = 0; added = 0
         telemetry_stream = []
         for source in sources:
-            if source != to_addr:
-                for entry in sources[source]:
-                    elements += 1
-                    timestamp = entry[0]; packed_telemetry = entry[1]
-                    appearance = self._db_get_appearance(source, raw=True)
-                    te = [source, timestamp, packed_telemetry, appearance]
-                    if only_latest:
-                        if not source in added_sources:
-                            added_sources[source] = True
+            if source in self.telemetry_response_excluded:
+                RNS.log(f"Excluding {RNS.prettyhexrep(source)} from collector response", RNS.LOG_DEBUG)
+            else:
+                if source != to_addr:
+                    for entry in sources[source]:
+                        elements += 1
+                        timestamp = entry[0]; packed_telemetry = entry[1]
+                        appearance = self._db_get_appearance(source, raw=True)
+                        te = [source, timestamp, packed_telemetry, appearance]
+                        if only_latest:
+                            if not source in added_sources:
+                                added_sources[source] = True
+                                telemetry_stream.append(te)
+                                added += 1
+                        else:
                             telemetry_stream.append(te)
                             added += 1
-                    else:
-                        telemetry_stream.append(te)
-                        added += 1
 
         if len(telemetry_stream) == 0:
             RNS.log(f"No new telemetry for request with timebase {timebase}", RNS.LOG_DEBUG)
@@ -5149,7 +5413,8 @@ class SidebandCore():
         return self.send_latest_telemetry(
             to_addr=to_addr,
             stream=telemetry_stream,
-            is_authorized_telemetry_request=is_authorized_telemetry_request
+            is_authorized_telemetry_request=is_authorized_telemetry_request,
+            is_collector_response=is_collector_response,
         )
 
 
@@ -5196,6 +5461,40 @@ class SidebandCore():
         if RNS.vendor.platformutils.get_platform() == "android":
             if not self.reticulum.is_connected_to_shared_instance:
                 RNS.Transport.detach_interfaces()
+
+    def start_voice(self):
+        try:
+            if not self.voice_running:
+                RNS.log("Starting voice service", RNS.LOG_DEBUG)
+                self.voice_running = True
+                from .voice import ReticulumTelephone
+                self.telephone = ReticulumTelephone(self.identity, owner=self, speaker=self.config["voice_output"], microphone=self.config["voice_input"], ringer=self.config["voice_ringer"])
+                ringtone_path = os.path.join(self.asset_dir, "audio", "notifications", "soft1.opus")
+                self.telephone.set_ringtone(ringtone_path)
+
+        except Exception as e:
+            self.voice_running = False
+            RNS.log(f"An error occurred while starting voice services, the contained exception was: {e}", RNS.LOG_ERROR)
+            RNS.trace_exception(e)
+
+    def stop_voice(self):
+        try:
+            if self.voice_running:
+                RNS.log("Stopping voice service", RNS.LOG_DEBUG)
+                if self.telephone:
+                    self.telephone.stop()
+                    del self.telephone
+
+                self.telephone = None
+                self.voice_running = False
+
+        except Exception as e:
+            RNS.log(f"An error occurred while stopping voice services, the contained exception was: {e}", RNS.LOG_ERROR)
+            RNS.trace_exception(e)
+
+    def incoming_call(self, remote_identity):
+        display_name = self.voice_display_name(remote_identity.hash)
+        self.setstate("voice.incoming_call", display_name)
 
 rns_config = """# This template is used to generate a
 # running configuration for Sideband's

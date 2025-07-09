@@ -96,6 +96,16 @@ MDNavigationLayout:
                             IconLeftWidget:
                                 icon: "account-voice"
                                 on_release: root.ids.screen_manager.app.announces_action(self)
+                                
+
+                        OneLineIconListItem:
+                            text: "Voice"
+                            on_release: root.ids.screen_manager.app.voice_action(self)
+                            # _no_ripple_effect: True
+                        
+                            IconLeftWidget:
+                                icon: "phone-in-talk"
+                                on_release: root.ids.screen_manager.app.voice_action(self)
 
                                                        
                         # OneLineIconListItem:
@@ -631,15 +641,33 @@ MDScreen:
                 #         font_size: dp(24)
                 #         # disabled: True
 
-                MDLabel:
-                    text: "Shared Instance Access\\n"
-                    id: connectivity_shared_access_label
-                    font_style: "H5"
+                # MDLabel:
+                #     text: "Shared Instance Access\\n"
+                #     id: connectivity_shared_access_label
+                #     font_style: "H5"
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    padding: [0,0,dp(24),0]
+                    size_hint_y: None
+                    height: dp(24)
+                    
+                    MDLabel:
+                        id: connectivity_shared_access_label
+                        text: "Share Reticulum Instance"
+                        font_style: "H6"
+                        # disabled: True
+
+                    MDSwitch:
+                        id: connectivity_share_instance
+                        active: False
+                        pos_hint: {"center_y": 0.3}
+                        # disabled: True
 
                 MDLabel:
                     id: connectivity_shared_access
                     markup: True
-                    text: "The Reticulum instance launched by openCom Companion will be available for other programs on this system. By default, this grants connectivity to other local Reticulum-based programs, but no access to management, interface status and path information.\\n\\nIf you want to allow full functionality and ability to manage the running instance, you will need to configure other programs to use the correct RPC key for this instance.\\n\\nThis can be very useful for using other tools related to Reticulum, for example via command-line programs running in Termux. To do this, use the button below to copy the RPC key configuration line, and paste it into the Reticulum configuration file within the Termux environment, or other program.\\n\\nPlease note! [b]It is not necessary[/b] to enable Reticulum Transport for this to work!\\n\\n"
+                    text: "You can make the Reticulum instance launched by openCom Companion available for other programs on this system. By default, this grants connectivity to other local Reticulum-based programs, but no access to management, interface status and path information.\\n\\nIf you want to allow full functionality and ability to manage the running instance, you will need to configure other programs to use the correct RPC key for this instance.\\n\\nThis can be very useful for using other tools related to Reticulum, for example via command-line programs running in Termux. To do this, use the button below to copy the RPC key configuration line, and paste it into the Reticulum configuration file within the Termux environment, or other program.\\n\\nPlease note! [b]It is not necessary[/b] to enable Reticulum Transport for this to work!\\n\\n"
                     size_hint_y: None
                     text_size: self.width, None
                     height: self.texture_size[1]
@@ -1287,7 +1315,7 @@ layout_settings_screen = """
     MDLabel:
         id: scaling_info
         markup: True
-        text: "You can scale the entire Sideband UI by specifying a scaling factor in the field below. After setting it, restart sideband for the scaling to take effect.\\n\\nSet to 0.0 to disable scaling adjustments.\\n\\n[b]Please note![/b] On some devices, the default scaling factor will be higher than 1.0, and setting a smaller value will result in miniscule UI elements."
+        text: "You can scale the entire openCom Companion UI by specifying a scaling factor in the field below. After setting it, restart sideband for the scaling to take effect.\\n\\nSet to 0.0 to disable scaling adjustments.\\n\\n[b]Please note![/b] On some devices, the default scaling factor will be higher than 1.0, and setting a smaller value will result in miniscule UI elements."
         size_hint_y: None
         text_size: self.width, None
         height: self.texture_size[1]
@@ -1790,11 +1818,27 @@ MDScreen:
                     height: dp(48)
                     
                     MDLabel:
-                        text: "Use high-quality voice for PTT"
+                        text: "High-quality codec for LXMF PTT"
                         font_style: "H6"
 
                     MDSwitch:
                         id: settings_hq_ptt
+                        pos_hint: {"center_y": 0.3}
+                        disabled: False
+                        active: False
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    padding: [0,0,dp(24),dp(0)]
+                    height: dp(48)
+                    
+                    MDLabel:
+                        text: "Enable voice calls"
+                        font_style: "H6"
+
+                    MDSwitch:
+                        id: settings_voice_enabled
                         pos_hint: {"center_y": 0.3}
                         disabled: False
                         active: False

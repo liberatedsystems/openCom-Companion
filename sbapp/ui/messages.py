@@ -319,6 +319,19 @@ class Messages():
                         prgstr = ""
                         sphrase = "Sending"
                         prg = self.app.sideband.get_lxm_progress(msg["hash"])
+                        if not hasattr(w, "last_prg_update"):
+                            w.last_prg_update = time.time()
+                            w.last_prg = prg
+                            speed = None
+                        else:
+                            now = time.time()
+                            size = msg["lxm"].packed_size
+                            td = now - w.last_prg_update
+                            if td == 0 or prg == None or w.last_prg == None: speed = None
+                            else:
+                                bd = prg*size - w.last_prg*size
+                                speed = (bd/td)*8
+
                         if prg != None:
                             prgstr = ", "+str(round(prg*100, 1))+"% done"
                             if prg <= 0.00:
@@ -336,6 +349,7 @@ class Messages():
                                 sphrase = "Link established"
                             elif prg >= 0.05:
                                 sphrase = "Sending"
+                                if speed != None: prgstr += f", {RNS.prettyspeed(speed)}"
                             
                         if msg["title"]:
                             titlestr = "[b]Title[/b] "+msg["title"].decode("utf-8")+"\n"
@@ -730,16 +744,23 @@ class Messages():
 
                 if has_audio:
                     def play_audio(sender):
-                        self.app.play_audio_field(sender.audio_field)
-                        stored_color = sender.md_bg_color
-                        if sender.lsource == self.app.sideband.lxmf_destination.hash:
-                            sender.md_bg_color = mdc(c_delivered, intensity_play)
-                        else:
-                            sender.md_bg_color = mdc(c_received, intensity_play)
+                        touch_event = None; block_play = False
+                        if sender and hasattr(sender, "last_touch"): touch_event = sender.last_touch
+                        if touch_event and hasattr(touch_event, "dpos"):
+                            delta = abs(touch_event.dpos[0]) + abs(touch_event.dpos[1])
+                            if delta >= 2.0: block_play = True
 
-                        def cb(dt):
-                            sender.md_bg_color = stored_color
-                        Clock.schedule_once(cb, 0.25)
+                        if not block_play:
+                            self.app.play_audio_field(sender.audio_field)
+                            stored_color = sender.md_bg_color
+                            if sender.lsource == self.app.sideband.lxmf_destination.hash:
+                                sender.md_bg_color = mdc(c_delivered, intensity_play)
+                            else:
+                                sender.md_bg_color = mdc(c_received, intensity_play)
+
+                            def cb(dt):
+                                sender.md_bg_color = stored_color
+                            Clock.schedule_once(cb, 0.25)
 
                     item.has_audio = True
                     item.audio_size = len(audio_field[1])
@@ -1443,7 +1464,10 @@ Builder.load_string("""
             id: heading_text
             markup: True
             text: root.heading
-            adaptive_size: True
+            size_hint_y: None
+            height: self.texture_size[1]
+            # adaptive_size: True
+
             # theme_text_color: 'Custom'
             # text_color: rgba(255,255,255,100)
             pos: 0, root.height - (self.height + root.padding[0] + dp(8))

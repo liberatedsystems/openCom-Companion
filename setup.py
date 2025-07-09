@@ -114,8 +114,8 @@ setuptools.setup(
         ]
     },
     install_requires=[
-        "rns>=0.9.2",
-        "lxmf>=0.6.0",
+        "rns>=0.9.6",
+        "lxmf>=0.7.1",
         "kivy>=2.3.0",
         "pillow>=10.2.0",
         "qrcode",
@@ -123,12 +123,14 @@ setuptools.setup(
         "ffpyplayer",
         "sh",
         "numpy<=1.26.4",
+        "lxst>=0.3.0",
         "mistune>=3.0.2",
         "beautifulsoup4",
         "pycodec2;sys.platform!='Windows' and sys.platform!='win32' and sys.platform!='darwin'",
         "pyaudio;sys.platform=='linux'",
         "pyobjus;sys.platform=='darwin'",
         "pyogg;sys.platform=='Windows' and sys.platform!='win32'",
+        "audioop-lts>=0.2.1;python_version>='3.13'"
     ],
     python_requires='>=3.7',
 )

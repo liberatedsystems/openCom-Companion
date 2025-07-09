@@ -1,7 +1,7 @@
 Sideband <img align="right" src="https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg"/>
 =========
 
-Sideband is an extensible LXMF messaging client, situational awareness tracker and remote control and monitoring system for Android, Linux, macOS and Windows. It allows you to communicate with other people or LXMF-compatible systems over Reticulum networks using LoRa, Packet Radio, WiFi, I2P, Encrypted QR Paper Messages, or anything else Reticulum supports.
+Sideband is an extensible LXMF messaging and LXST telephony client, situational awareness tracker and remote control and monitoring system for Android, Linux, macOS and Windows. It allows you to communicate with other people or LXMF-compatible systems over Reticulum networks using LoRa, Packet Radio, WiFi, I2P, Encrypted QR Paper Messages, or anything else Reticulum supports.
 
 ![Screenshot](https://github.com/markqvist/Sideband/raw/main/docs/screenshots/devices_small.webp)
 
@@ -13,10 +13,11 @@ This also means that Sideband operates differently than what you might be used t
 
 Sideband provides many useful and interesting functions, such as:
 
-- **Secure** and **self-sovereign** messaging using the LXMF protocol over Reticulum.
+- **Secure** and **self-sovereign** messaging and voice calls using the LXMF and LXST protocols over Reticulum.
 - **Image** and **file transfers** over all supported mediums.
 - **Audio messages** that work even over **LoRa** and **radio links**, thanks to [Codec2](https://github.com/drowe67/codec2/) and [Opus](https://github.com/xiph/opus) encoding.
 - Secure and direct P2P **telemetry and location sharing**. No third parties or servers ever have your data.
+- The telemetry system is **completely extensible** via [simple plugins](#creating-plugins).
 - Situation display on both online and **locally stored offline maps**.
 - Geospatial awareness calculations.
 - Exchanging messages through **encrypted QR-codes on paper**, or through messages embedded directly in **lxm://** links.
@@ -39,7 +40,7 @@ Sideband can run on most computing devices, but installation methods vary by dev
 
 ## On Android
 
-For your Android devices, you can install Sideband through F-Droid, by adding the [Between the Borders Repo](https://reticulum.betweentheborders.com/fdroid/repo/), or you can download an [APK on the latest release page](https://github.com/markqvist/Sideband/releases/latest). Both sources are signed with the same release keys, and can be used interchangably.
+For your Android devices, you can download an [APK on the latest release page](https://github.com/markqvist/Sideband/releases/latest).
 
 After the application is installed on your Android device, it is also possible to pull updates directly through the **Repository** section of the application.
 
@@ -47,9 +48,8 @@ After the application is installed on your Android device, it is also possible t
 
 On all Linux-based operating systems, Sideband is available as a `pipx`/`pip` package. This installation method **includes desktop integration**, so that Sideband will show up in your applications menu and launchers. Below are install steps for the most common recent Linux distros. For Debian 11, see the end of this section.
 
-**Please note!** The very latest Python release, Python 3.13 is currently **not** compatible with the Kivy framework, that Sideband uses to render its user interface. If your Linux distribution uses Python 3.13 as its default Python installation, you will need to install an earlier version as well. Using [the latest release of Python 3.12](https://www.python.org/downloads/release/python-3127/) is recommended.
-
-You will first need to install a few dependencies for audio messaging and Codec2 support to work:
+#### Basic Installation
+You will first need to install a few dependencies for voice calls, audio messaging and Codec2 support to work:
 
 ```bash
 # For Debian (12+), Ubuntu (22.04+) and derivatives
@@ -68,10 +68,6 @@ Once those are installed, install the Sideband application itself:
 ```bash
 # Finally, install Sideband using pipx:
 pipx install sbapp
-
-# If you need to specify a specific Python version,
-# use something like the following:
-pipx install sbapp --python python3.12
 ```
 
 After installation, you can now run Sideband in a number of different ways:
@@ -84,7 +80,10 @@ After installation, you can now run Sideband in a number of different ways:
 pipx ensurepath
 
 # The first time you run Sideband, you will need to do it
-# from the terminal:
+# from the terminal, for the application launcher item to
+# show up. On some distros you may also need to log out
+# and back in again, or simply reboot the machine for the
+# application entry to show up in your menu.
 sideband
 
 # At the first launch, it will add an application icon
@@ -101,6 +100,9 @@ sideband --daemon
 sideband -v
 ```
 
+If you do not already have Reticulum connectivity set up on your computer or local network, you will probably want to edit the Reticulum configuration file at `~/.reticulum/config` and [add any interfaces](https://reticulum.network/manual/interfaces.html) you need for connectivity.
+
+#### Advanced Installation
 You can also install Sideband in various alternative ways:
 
 ```bash
@@ -135,17 +137,17 @@ You can install Sideband on all Raspberry Pi models that support 64-bit operatin
 
 Aditionally, the `pycodec2` package needs to be installed manually. I have provided a pre-built version, that you can download and install with a single command, or if you don't want to trust my pre-built version, you can [build and install it from source yourself](https://github.com/gregorias/pycodec2/blob/main/DEV.md).
 
-The install instructions below assume that you are installing Sideband on 64-bit Raspberry Pi OS (based on Debian Bookworm). If you're running something else on your Pi, you might need to modify some commands slightly. To install Sideband on Raspberry Pi, follow these steps:
+The install instructions below assume that you are installing Sideband on 64-bit Raspberry Pi OS (based on Debian Bookworm or later). If you're running something else on your Pi, you might need to modify some commands slightly. To install Sideband on Raspberry Pi with full support for voice calls, audio messages and Codec2, follow these steps:
 
 ```bash
 # First of all, install the required dependencies:
 sudo apt install python3-pip python3-pyaudio python3-dev python3-cryptography build-essential libopusfile0 libsdl2-dev libavcodec-dev libavdevice-dev libavfilter-dev portaudio19-dev codec2 libcodec2-1.0 xclip xsel
 
 # If you don't want to compile pycodec2 yourself,
-# download the pre-compiled package provided here
+# download the pre-compiled package provided here:
 wget https://raw.githubusercontent.com/markqvist/Sideband/main/docs/utilities/pycodec2-3.0.1-cp311-cp311-linux_aarch64.whl
 
-# Install it:
+# And install it:
 pip install ./pycodec2-3.0.1-cp311-cp311-linux_aarch64.whl --break-system-packages
 
 # You can now install Sideband
@@ -158,6 +160,8 @@ sudo reboot
 # from the terminal, or from the application menu
 sideband
 ```
+
+If you do not already have Reticulum connectivity set up on your computer or local network, you will probably want to edit the Reticulum configuration file at `~/.reticulum/config` and [add any interfaces](https://reticulum.network/manual/interfaces.html) you need for connectivity.
 
 ## On macOS
 
@@ -184,6 +188,8 @@ pip3 install rns --break-system-packages
 ```
 
 If you do not have Python and `pip` available, [download and install it](https://www.python.org/downloads/) first.
+
+If you do not already have Reticulum connectivity set up on your computer or local network, you will probably want to edit the Reticulum configuration file at `~/.reticulum/config` and [add any interfaces](https://reticulum.network/manual/interfaces.html) you need for connectivity.
 
 #### Source Package Install
 
@@ -238,6 +244,8 @@ Simply download the packaged Windows ZIP file from the [latest release page](htt
 
 When running Sideband for the first time, a default Reticulum configuration file will be created, if you don't already have one. If you don't have any existing Reticulum connectivity available locally, you may want to edit the file, located at `C:\Users\USERNAME\.reticulum\config` and manually add an interface that provides connectivity to a wider network. If you just want to connect over the Internet, you can add one of the public hubs on the [Reticulum Testnet](https://reticulum.network/connect.html).
 
+#### Installing Reticulum Utilities
+
 Though the ZIP file contains everything necessary to run Sideband, it is also recommended to install the Reticulum command line utilities separately, so that you can use commands like `rnstatus` and `rnsd` from the command line. This will make it easier to manage Reticulum connectivity on your system. If you do not already have Python installed on your system, [download and install it](https://www.python.org/downloads/) first.
 
 **Important!** When asked by the installer, make sure to add the Python program to your `PATH` environment variables. If you don't do this, you will not be able to use the `pip` installer, or run any of the installed commands. When Python has been installed, you can open a command prompt and install the Reticulum package via `pip`:
@@ -262,6 +270,28 @@ The Sideband application can now be launched by running the command `sideband` i
 
 Since this installation method automatically installs the `rns` and `lxmf` packages as well, you will also have access to using all the included RNS and LXMF utilities like `rnstatus`, `rnsd` and `lxmd` on your system.
 
+# Creating Plugins
+
+Sideband features a flexible and extensible plugin system, that allows you to hook all kinds of control, status reporting, command execution and telemetry collection into the LXMF messaging system. Plugins can be created as either *Telemetry*, *Command* or *Service* plugins, for different use-cases.
+
+To create plugins for Sideband, you can find a variety of [code examples](https://github.com/markqvist/Sideband/tree/main/docs/example_plugins) in this repository, that you can use as a basis for writing your own plugins. The example plugins include:
+
+- [Custom telemetry](https://github.com/markqvist/Sideband/blob/main/docs/example_plugins/telemetry.py)
+- [Getting BME280 temperature, humidity and pressure](https://github.com/markqvist/Sideband/blob/main/docs/example_plugins/bme280_telemetry.py)
+- [Basic commands](https://github.com/markqvist/Sideband/blob/main/docs/example_plugins/basic.py)
+- [Location telemetry from GPSd on Linux](https://github.com/markqvist/Sideband/blob/main/docs/example_plugins/gpsd_location.py)
+- [Location telemetry from Windows Location Provider](https://github.com/markqvist/Sideband/blob/main/docs/example_plugins/windows_location.py)
+- [Getting statistics from your LXMF propagation node](https://github.com/markqvist/Sideband/blob/main/docs/example_plugins/lxmd_telemetry.py)
+- [Viewing cameras and streams](https://github.com/markqvist/Sideband/blob/main/docs/example_plugins/view.py)
+- [Fetching an XKCD comic](https://github.com/markqvist/Sideband/blob/main/docs/example_plugins/comic.py)
+- [Creating a service plugin](https://github.com/markqvist/Sideband/blob/main/docs/example_plugins/service.py)
+
+For creating telemetry plugins, Sideband includes 20+ built-in sensor types to chose from, for representing all kinds telemetry data. If none of those fit your needs, there is a `Custom` sensor type, that can include any kind of data.
+
+Command plugins allow you to define any kind of action or command to be run when receiving command messages from other LXMF clients. In the example directory, you will find various command plugin templates, for example for viewing security cameras or webcams through Sideband.
+
+Service plugins allow you to integrate any kind of service, bridge or other system into Sideband, and have that react to events or state changes in Sideband itself.
+
 # Paper Messaging Example
 
 You can try out the paper messaging functionality by using the following QR-code. It is a paper message sent to the LXMF address `6b3362bd2c1dbf87b66a85f79a8d8c75`. To be able to decrypt and read the message, you will need to import the following base32-encoded Reticulum Identity into the app:
@@ -285,37 +315,20 @@ You can help support the continued development of open, free and private communi
   ```
   84FpY1QbxHcgdseePYNmhTHcrgMX4nFfBYtz2GKYToqHVVhJp8Eaw1Z1EedRnKD19b3B8NiLCGVxzKV17UMmmeEsCrPyA5w
   ```
-- Ethereum
-  ```
-  0xFDabC71AC4c0C78C95aDDDe3B4FA19d6273c5E73
-  ```
 - Bitcoin
   ```
-  35G9uWVzrpJJibzUwpNUQGQNFzLirhrYAH
+  bc1p4a6axuvl7n9hpapfj8sv5reqj8kz6uxa67d5en70vzrttj0fmcusgxsfk5
   ```
+- Ethereum
+  ```
+  0xae89F3B94fC4AD6563F0864a55F9a697a90261ff
+  ```
+- Liberapay: https://liberapay.com/Reticulum/
+
 - Ko-Fi: https://ko-fi.com/markqvist
 
+
 <br/>
-
-# Planned Features
-
-- <s>Secure and private location and telemetry sharing</s>
-- <s>Including images in messages</s>
-- <s>Sending file attachments</s>
-- <s>Offline and online maps</s>
-- <s>Paper messages</s>
-- <s>Using Sideband as a Reticulum Transport Instance</s>
-- <s>Encryption keys export and import</s>
-- <s>Plugin support for commands, services and telemetry</s>
-- <s>Sending voice messages (using Codec2 and Opus)</s>
-- <s>Adding a Linux desktop integration</s>
-- <s>Adding prebuilt Windows binaries to the releases</s>
-- <s>Adding prebuilt macOS binaries to the releases</s>
-- <s>A debug log viewer</s>
-- Adding a Nomad Net page browser
-- LXMF sneakernet functionality
-- Network visualisation and test tools
-- Better message sorting mechanism
 
 # License
 Unless otherwise noted, this work is licensed under a [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License][cc-by-nc-sa].
