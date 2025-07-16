@@ -16,7 +16,8 @@ COPY  docker/init.gradle .gradle/
 
 # Clone required repos
 RUN git clone https://github.com/jacobeva/Reticulum \
-    && git clone https://github.com/markqvist/LXMF 
+    && git clone https://github.com/markqvist/LXMF \
+    && git clone https://github.com/markqvist/LXST
 
 # Switch branches
 WORKDIR "Reticulum"

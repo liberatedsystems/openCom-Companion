@@ -101,7 +101,8 @@ getrns:
 	(cp -rv ../../LXMF/LXMF ./)
 	-(rm ./LXMF/Utilities/LXMF)
 	-(rm ./LXMF/__pycache__ -r)
-	(cp -rv ../../LXST/LXST ./;rm ./LXST/Utilities/LXST)
+	(cp -rv ../../LXST/LXST ./)
+	-(rm ./LXST/Utilities/LXST)
 	-(rm ./LXST/__pycache__ -r)
 	-(rm ./LXST/Utilities/__pycache__ -r)
 
