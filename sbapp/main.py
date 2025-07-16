@@ -6743,7 +6743,7 @@ class SidebandApp(MDApp):
                 threading.Thread(target=lj, daemon=True).start()
 
             guide_text1 = """
-[size=18dp][b]Introduction[/b][/size][size=5dp]\n \n[/size]Welcome to [i]openCom Companion[/i], an LXMF client for Android, Linux and macOS. With openCom Companion, you can communicate with other people or LXMF-compatible systems over Reticulum networks using LoRa, Packet Radio, WiFi, I2P, or anything else Reticulum supports.
+[size=18dp][b]Introduction[/b][/size][size=5dp]\n \n[/size]Welcome to [i]openCom Companion[/i], an LXMF client for Android. With openCom Companion, you can communicate with other people or LXMF-compatible systems over Reticulum networks using LoRa, Packet Radio, WiFi, I2P, or anything else Reticulum supports.
 
 This short guide will give you a basic introduction to the concepts that underpin openCom Companion and LXMF (which is the protocol that openCom Companion uses to communicate). If you are not already familiar with LXMF and Reticulum, it is probably a good idea to read this guide, since openCom Companion is very different from other messaging apps."""
             guide_text2 = """
