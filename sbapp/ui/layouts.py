@@ -2746,18 +2746,6 @@ MDScreen:
                         pos_hint: {"center_y": 0.3}
                         active: False
 
-                MDLabel:
-                    text: "Bluetooth Settings\\n"
-                    font_style: "H6"
-
-                MDLabel:
-                    id: hardware_rnode_info
-                    markup: True
-                    text: "If you enable connection via Bluetooth, openCom Companion will attempt to connect to any available and paired RNodes over Bluetooth."
-                    size_hint_y: None
-                    text_size: self.width, None
-                    height: self.texture_size[1]
-
                 MDBoxLayout:
                     orientation: "horizontal"
                     size_hint_y: None
@@ -2776,41 +2764,41 @@ MDScreen:
                 MDLabel:
                     id: hardware_rnode_info
                     markup: True
-                    text: "If you enable connection via Bluetooth, openCom Companion will attempt to connect to any available and paired openCom devices over Bluetooth.\\n\\nYou must first pair the openCom device with your Android device for this to work. Details on how to pair via Bluetooth will be available in the manual that came with your openCom device. \\nYou can also change Bluetooth settings using the \\"rnodeconf\\" utility from a computer.\\n"
+                    text: "If you enable connection via Bluetooth, openCom Companion will attempt to connect to any available and paired RNodes over Bluetooth."
                     size_hint_y: None
                     text_size: self.width, None
                     height: self.texture_size[1]
 
-                MDBoxLayout:
-                    orientation: "vertical"
-                    spacing: "24dp"
-                    size_hint_y: None
-                    height: self.minimum_height
-                    padding: [dp(0), dp(0), dp(0), dp(12)]
+                #MDBoxLayout:
+                #    orientation: "vertical"
+                #    spacing: "24dp"
+                #    size_hint_y: None
+                #    height: self.minimum_height
+                #    padding: [dp(0), dp(0), dp(0), dp(12)]
 
-                    MDRectangleFlatIconButton:
-                        id: hardware_rnode_bt_scan_button
-                        icon: "bluetooth-connect"
-                        text: "Pair New Device"
-                        padding: [dp(0), dp(14), dp(0), dp(14)]
-                        icon_size: dp(24)
-                        font_size: dp(16)
-                        size_hint: [1.0, None]
-                        on_release: root.app.hardware_rnode_bt_scan_action(self)
+                #    MDRectangleFlatIconButton:
+                #        id: hardware_rnode_bt_scan_button
+                #        icon: "bluetooth-connect"
+                #        text: "Pair New Device"
+                #        padding: [dp(0), dp(14), dp(0), dp(14)]
+                #        icon_size: dp(24)
+                #        font_size: dp(16)
+                #        size_hint: [1.0, None]
+                #        on_release: root.app.hardware_rnode_bt_scan_action(self)
 
-                MDBoxLayout:
-                    id: rnode_scan_results
-                    orientation: "vertical"
-                    spacing: "24dp"
-                    size_hint_y: None
-                    height: self.minimum_height
-                    padding: [dp(0), dp(0), dp(0), dp(12)]
+                #MDBoxLayout:
+                #    id: rnode_scan_results
+                #    orientation: "vertical"
+                #    spacing: "24dp"
+                #    size_hint_y: None
+                #    height: self.minimum_height
+                #    padding: [dp(0), dp(0), dp(0), dp(12)]
 
-                MDBoxLayout:
-                    orientation: "vertical"
-                    spacing: "24dp"
-                    size_hint_y: None
-                    height: self.minimum_height
+                #MDBoxLayout:
+                #    orientation: "vertical"
+                #    spacing: "24dp"
+                #    size_hint_y: None
+                #    height: self.minimum_height
                     # padding: [dp(0), dp(0), dp(0), dp(35)]
 
                     #MDRectangleFlatIconButton:
